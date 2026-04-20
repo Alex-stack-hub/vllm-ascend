@@ -30,6 +30,7 @@ class MoECommType(Enum):
     FUSED_MC2 = 3
 
 
+<<<<<<< Updated upstream
 _MRV2_IN_PROFILE_RUN: ContextVar[bool] = ContextVar("_MRV2_IN_PROFILE_RUN", default=False)
 
 
@@ -51,6 +52,17 @@ def override_mrv2_in_profile_run(enabled: bool):
 
 def get_mrv2_in_profile_run() -> bool:
     return _MRV2_IN_PROFILE_RUN.get()
+=======
+def _prefer_allgather_moe_comm(vllm_config: VllmConfig) -> bool:
+    model_config = vllm_config.model_config
+    candidates = (
+        getattr(model_config, "hf_text_config", None),
+        getattr(getattr(model_config, "hf_config", None), "text_config", None),
+        getattr(model_config, "hf_config", None),
+    )
+    model_types = {getattr(config, "model_type", None) for config in candidates if config is not None}
+    return "gemma4" in model_types or "gemma4_text" in model_types
+>>>>>>> Stashed changes
 
 
 @contextmanager
@@ -86,6 +98,18 @@ def set_ascend_forward_context(
         forward_context = get_forward_context()
         forward_context.draft_attn_metadatas = draft_attn_metadatas
 
+        def _extract_num_actual_tokens(attn_meta: Any) -> int | None:
+            if attn_meta is None:
+                return None
+            if hasattr(attn_meta, "num_actual_tokens"):
+                return attn_meta.num_actual_tokens
+            if isinstance(attn_meta, dict):
+                for value in attn_meta.values():
+                    num_actual = _extract_num_actual_tokens(value)
+                    if num_actual is not None:
+                        return num_actual
+            return None
+
         from vllm_ascend.ops.fused_moe.moe_comm_method import get_moe_comm_method
 
         max_num_tokens = int(num_tokens_across_dp.max().item()) if num_tokens_across_dp is not None else num_tokens
@@ -111,6 +135,11 @@ def set_ascend_forward_context(
         # exceeds this threshold, the performance benefits can be maximized.
         # Conversely, if the concurrency is below the threshold,
         # the performance may degrade due to the switching of communication methods.
+        attn_num_actual_tokens = _extract_num_actual_tokens(attn_metadata)
+        if attn_num_actual_tokens is not None:
+            # Keep flashcomm bookkeeping aligned with the real token count even
+            # when FIA/graph padding inflated batch_descriptor.num_tokens.
+            num_tokens = attn_num_actual_tokens
 
         # main model and drafter model may have different architecture
         is_context_moe_model = is_drafter_moe_model(vllm_config) if is_draft_model else is_moe_model(vllm_config)
@@ -148,8 +177,8 @@ def set_ascend_forward_context(
         forward_context.model_instance = model_instance
         forward_context.is_draft_model = is_draft_model
 
-        if num_tokens is None and attn_metadata is not None:
-            num_tokens = attn_metadata.num_actual_tokens
+        if num_actual_tokens is None:
+            num_actual_tokens = attn_num_actual_tokens
 
         dp_world_size = get_dp_group().world_size
         if dp_world_size > 1 and forward_context.dp_metadata is not None:
@@ -245,6 +274,8 @@ def select_moe_comm_method(num_tokens: int, vllm_config: VllmConfig, is_draft_mo
     """
     if not is_moe_model(vllm_config):
         return None
+    if _prefer_allgather_moe_comm(vllm_config):
+        return MoECommType.ALLGATHER
     mc2_tokens_capacity = get_mc2_tokens_capacity()
     soc_version = get_ascend_device_type()
     quant_type = getattr(

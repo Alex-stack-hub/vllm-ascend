@@ -1,4 +1,8 @@
+import json
+import os
+
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 import torch_npu
 from vllm.distributed import (
@@ -20,6 +24,117 @@ from vllm_ascend.ops.weight_prefetch import maybe_npu_prefetch
 from vllm_ascend.utils import enable_sp_by_pass, is_vl_model, npu_stream_switch, prefetch_stream
 
 
+def _dump_flashcomm_debug(stage: str, **values) -> None:
+    debug_file = os.getenv("VLLM_ASCEND_FLASHCOMM_DEBUG_FILE")
+    if not debug_file:
+        return
+    if getattr(_EXTRA_CTX, "in_profile_run", False) or getattr(_EXTRA_CTX, "capturing", False):
+        return
+
+    rank = -1
+    if dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+
+    record = {"stage": stage, "rank": rank}
+    for key, value in values.items():
+        if isinstance(value, torch.Tensor):
+            detached = value.detach()
+            flat = detached.reshape(-1)
+            record[key] = {
+                "shape": list(detached.shape),
+                "dtype": str(detached.dtype),
+                "sample": flat[:8].cpu().tolist(),
+            }
+        else:
+            record[key] = value
+
+    with open(f"{debug_file}.rank{rank}.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+
+
+def _resolve_num_actual_tokens(attn_metadata) -> int | None:
+    num_actual_tokens = getattr(attn_metadata, "num_actual_tokens", None)
+    if num_actual_tokens is not None:
+        return int(num_actual_tokens)
+
+    if isinstance(attn_metadata, dict) and attn_metadata:
+        first_item = next(iter(attn_metadata.values()))
+        value = getattr(first_item, "num_actual_tokens", None)
+        return int(value) if value is not None else None
+
+    if isinstance(attn_metadata, list) and attn_metadata:
+        first_item = attn_metadata[0]
+        if isinstance(first_item, dict) and first_item:
+            value = getattr(next(iter(first_item.values())), "num_actual_tokens", None)
+            return int(value) if value is not None else None
+
+    return None
+
+
+def _resolve_flashcomm_token_layout(total_tokens: int | None = None) -> tuple[int, int | None]:
+    pad_size = _EXTRA_CTX.pad_size
+    num_actual_tokens = None
+    try:
+        forward_context = get_forward_context()
+    except AssertionError:
+        return pad_size, num_actual_tokens
+
+    num_actual_tokens = _resolve_num_actual_tokens(getattr(forward_context, "attn_metadata", None))
+    if num_actual_tokens is None:
+        return pad_size, num_actual_tokens
+
+    padded_num_tokens = getattr(forward_context, "num_tokens", None)
+    if padded_num_tokens is None and total_tokens is not None:
+        padded_num_tokens = total_tokens
+
+    if padded_num_tokens is not None and padded_num_tokens >= num_actual_tokens:
+        inferred_pad_size = int(padded_num_tokens - num_actual_tokens)
+        if pad_size == 0 and inferred_pad_size > 0:
+            pad_size = inferred_pad_size
+
+    return pad_size, num_actual_tokens
+
+
+def _safe_ep_world_size(is_ep_comm: bool) -> int | None:
+    if not is_ep_comm:
+        return None
+    try:
+        return get_ep_group().world_size
+    except AssertionError:
+        return None
+
+
+def _ceil_div(num, denom: int):
+    return (num + denom - 1) // denom
+
+
+def _resolve_fake_pad_size() -> int:
+    return max(int(getattr(_EXTRA_CTX, "pad_size", 0)), 0)
+
+
+def _maybe_chunk_residual_impl(x: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
+    try:
+        get_forward_context()
+    except AssertionError:
+        return residual
+
+    if x.size(0) != residual.size(0):
+        tp_size = get_tensor_model_parallel_world_size()
+        tp_rank = get_tensor_model_parallel_rank()
+        pad_size, num_actual_tokens = _resolve_flashcomm_token_layout(residual.size(0))
+        should_pad = pad_size > 0
+        if num_actual_tokens is not None:
+            should_pad = residual.size(0) == num_actual_tokens
+        else:
+            should_pad = residual.size(0) % tp_size != 0
+        if should_pad:
+            residual = F.pad(residual, (0, 0, 0, pad_size))
+        residual = torch.chunk(residual, tp_size, dim=0)[tp_rank]
+
+    return residual
+
+
+<<<<<<< Updated upstream
 def _maybe_chunk_residual_impl(x: torch.Tensor, residual: torch.Tensor) -> torch.Tensor:
     try:
         get_forward_context()
@@ -97,27 +212,181 @@ def _maybe_pad_and_reduce_impl(x: torch.Tensor, is_ep_comm: bool = False) -> tor
         num_tokens_across_dp_cpu = get_forward_context().dp_metadata.num_tokens_across_dp_cpu
         padded_x = torch.empty((dp_size, _EXTRA_CTX.padded_length, *x.shape[1:]), device=x.device, dtype=x.dtype)
         offset = 0
+=======
+def _maybe_all_gather_and_maybe_unpad_impl(x: torch.Tensor, label: bool, is_ep_comm: bool = False) -> torch.Tensor:
+    try:
+        forward_context = get_forward_context()
+    except AssertionError:
+        return x
+
+    flash_comm_v1_enabled = _EXTRA_CTX.flash_comm_v1_enabled or (enable_sp_by_pass() and is_ep_comm)
+    _dump_flashcomm_debug(
+        "maybe_all_gather_input",
+        x=x,
+        label=label,
+        is_ep_comm=is_ep_comm,
+        flash_comm_v1_enabled=flash_comm_v1_enabled,
+        extra_flash_comm_v1_enabled=_EXTRA_CTX.flash_comm_v1_enabled,
+        forward_flash_comm_v1_enabled=getattr(forward_context, "flash_comm_v1_enabled", None),
+        enable_sp_by_pass=enable_sp_by_pass(),
+        dp_metadata_is_none=forward_context.dp_metadata is None,
+        num_tokens=getattr(forward_context, "num_tokens", None),
+        pad_size=_EXTRA_CTX.pad_size,
+        tp_world_size=get_tensor_model_parallel_world_size(),
+        ep_world_size=_safe_ep_world_size(is_ep_comm),
+    )
+    if flash_comm_v1_enabled and label:
+        dp_metadata = forward_context.dp_metadata
+        if dp_metadata is None or not is_ep_comm:
+            branch = "tp_all_gather"
+            x = tensor_model_parallel_all_gather(x, 0)
+            if is_ep_comm:
+                _, num_actual_tokens = _resolve_flashcomm_token_layout(x.size(0))
+                if num_actual_tokens is not None and x.shape[0] > num_actual_tokens:
+                    x = x[:num_actual_tokens]
+            else:
+                pad_size = _EXTRA_CTX.pad_size
+                num_actual_tokens = None
+                if pad_size > 0:
+                    x = x[:-pad_size]
+        else:
+            branch = "ep_all_gather"
+            x = get_ep_group().all_gather(x, 0)
+            if enable_sp_by_pass():  # TODO: do unpad
+                _dump_flashcomm_debug(
+                    "maybe_all_gather_output",
+                    x=x,
+                    branch=branch,
+                    enable_sp_by_pass=True,
+                )
+                return x
+            # unpad
+            num_tokens_across_dp_cpu = dp_metadata.num_tokens_across_dp_cpu
+            result = torch.empty((num_tokens_across_dp_cpu.sum(), *x.shape[1:]), device=x.device, dtype=x.dtype)
+            dp_size = get_dp_group().world_size
+            x = x.view(dp_size, _EXTRA_CTX.padded_length, *x.shape[1:])
+            offset = 0
+            for idx in range(dp_size):
+                num_tokens_dp = num_tokens_across_dp_cpu[idx]
+                result[offset : offset + num_tokens_dp] = x[idx, :num_tokens_dp]
+                offset += num_tokens_dp
+            x = result
+            num_actual_tokens = None
+
+        _dump_flashcomm_debug(
+            "maybe_all_gather_output",
+            x=x,
+            branch=branch,
+            num_actual_tokens=num_actual_tokens,
+        )
+
+    return x
+
+
+def _maybe_pad_and_reduce_impl(x: torch.Tensor, is_ep_comm: bool = False) -> torch.Tensor:
+    try:
+        forward_context = get_forward_context()
+    except AssertionError:
+        return tensor_model_parallel_all_reduce(x)
+
+    flash_comm_v1_enabled = getattr(forward_context, "flash_comm_v1_enabled", False) or (
+        enable_sp_by_pass() and is_ep_comm
+    )
+    _dump_flashcomm_debug(
+        "maybe_pad_reduce_input",
+        x=x,
+        is_ep_comm=is_ep_comm,
+        flash_comm_v1_enabled=flash_comm_v1_enabled,
+        extra_flash_comm_v1_enabled=_EXTRA_CTX.flash_comm_v1_enabled,
+        forward_flash_comm_v1_enabled=getattr(forward_context, "flash_comm_v1_enabled", None),
+        enable_sp_by_pass=enable_sp_by_pass(),
+        dp_metadata_is_none=forward_context.dp_metadata is None,
+        num_tokens=getattr(forward_context, "num_tokens", None),
+        pad_size=_EXTRA_CTX.pad_size,
+        tp_world_size=get_tensor_model_parallel_world_size(),
+        ep_world_size=_safe_ep_world_size(is_ep_comm),
+    )
+
+    if not flash_comm_v1_enabled or (forward_context.is_draft_model and is_vl_model()):
+        out = tensor_model_parallel_all_reduce(x)
+        _dump_flashcomm_debug("maybe_pad_reduce_output", x=out, branch="tp_all_reduce")
+        return out
+
+    dp_metadata = forward_context.dp_metadata
+    if dp_metadata is None or not is_ep_comm:
+        if is_ep_comm:
+            _, num_actual_tokens = _resolve_flashcomm_token_layout(x.size(0))
+            if num_actual_tokens is not None and x.shape[0] > num_actual_tokens:
+                x = x[:num_actual_tokens]
+            if num_actual_tokens is not None:
+                expected_padded_tokens = (
+                    (num_actual_tokens + get_tensor_model_parallel_world_size() - 1)
+                    // get_tensor_model_parallel_world_size()
+                    * get_tensor_model_parallel_world_size()
+                )
+                if x.shape[0] < expected_padded_tokens:
+                    x = F.pad(x, (0, 0, 0, expected_padded_tokens - x.shape[0]))
+            else:
+                expected_padded_tokens = None
+        else:
+            pad_size = _EXTRA_CTX.pad_size
+            num_actual_tokens = None
+            expected_padded_tokens = None
+            if pad_size > 0:
+                x = F.pad(x, (0, 0, 0, pad_size))
+        out = tensor_model_parallel_reduce_scatter(x, 0)
+        _dump_flashcomm_debug(
+            "maybe_pad_reduce_output",
+            x=out,
+            branch="tp_reduce_scatter",
+            num_actual_tokens=num_actual_tokens,
+            expected_padded_tokens=expected_padded_tokens,
+        )
+        return out
+    else:
+        if enable_sp_by_pass():
+            out = get_ep_group().reduce_scatter(x.view(-1, *x.shape[1:]), 0)
+            _dump_flashcomm_debug("maybe_pad_reduce_output", x=out, branch="ep_reduce_scatter_bypass")
+            return out
+        # padding
+        dp_size = get_dp_group().world_size
+        num_tokens_across_dp_cpu = get_forward_context().dp_metadata.num_tokens_across_dp_cpu
+        padded_x = torch.empty((dp_size, _EXTRA_CTX.padded_length, *x.shape[1:]), device=x.device, dtype=x.dtype)
+        offset = 0
+>>>>>>> Stashed changes
         for idx in range(dp_size):
             num_tokens_dp = num_tokens_across_dp_cpu[idx]
             padded_x[idx, :num_tokens_dp] = x[offset : offset + num_tokens_dp]
             offset += num_tokens_dp
 
-        return get_ep_group().reduce_scatter(padded_x.view(-1, *x.shape[1:]), 0)
+        out = get_ep_group().reduce_scatter(padded_x.view(-1, *x.shape[1:]), 0)
+        _dump_flashcomm_debug("maybe_pad_reduce_output", x=out, branch="ep_reduce_scatter")
+        return out
 
 
 def _maybe_all_gather_and_maybe_unpad_fake(x: torch.Tensor, label: bool, is_ep_comm: bool = False) -> torch.Tensor:
-    if _EXTRA_CTX.flash_comm_v1_enabled and label:
+    flash_comm_v1_enabled = _EXTRA_CTX.flash_comm_v1_enabled or (enable_sp_by_pass() and is_ep_comm)
+    if flash_comm_v1_enabled and label:
+        world_size = _safe_ep_world_size(is_ep_comm) or get_tensor_model_parallel_world_size()
+        num_tokens = x.shape[0] * world_size - _resolve_fake_pad_size()
         return torch.empty(
-            (x.shape[0] * get_tensor_model_parallel_world_size(), *x.shape[1:]), device=x.device, dtype=x.dtype
+            (num_tokens, *x.shape[1:]),
+            device=x.device,
+            dtype=x.dtype,
         )
 
     return x
 
 
 def _maybe_pad_and_reduce_fake(x: torch.Tensor, is_ep_comm: bool = False) -> torch.Tensor:
-    if _EXTRA_CTX.flash_comm_v1_enabled or enable_sp_by_pass():
+    flash_comm_v1_enabled = _EXTRA_CTX.flash_comm_v1_enabled or (enable_sp_by_pass() and is_ep_comm)
+    if flash_comm_v1_enabled:
+        world_size = _safe_ep_world_size(is_ep_comm) or get_tensor_model_parallel_world_size()
+        num_tokens = _ceil_div(x.shape[0] + _resolve_fake_pad_size(), world_size)
         return torch.empty(
-            (x.shape[0] // get_tensor_model_parallel_world_size(), *x.shape[1:]), device=x.device, dtype=x.dtype
+            (num_tokens, *x.shape[1:]),
+            device=x.device,
+            dtype=x.dtype,
         )
 
     return x
@@ -171,7 +440,7 @@ def _matmul_and_reduce_impl_fake(input_parallel: torch.Tensor, layer_name: str) 
     self = forward_context.no_compile_layers[layer_name]
     num_tokens = input_parallel.size(0)
     if _EXTRA_CTX.flash_comm_v1_enabled:
-        num_tokens = num_tokens // self.tp_size
+        num_tokens = _ceil_div(num_tokens + _resolve_fake_pad_size(), self.tp_size)
     output = torch.empty(
         size=(num_tokens, self.output_size_per_partition), device=input_parallel.device, dtype=input_parallel.dtype
     )

@@ -391,7 +391,15 @@ class NPUPlatform(Platform):
                 "FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode"
             )
             compilation_config.use_inductor = False
-            compilation_config.splitting_ops = []
+            if compilation_config.splitting_ops is None:
+                compilation_config.splitting_ops = []
+            else:
+                compilation_config.splitting_ops = list(compilation_config.splitting_ops)
+                logger.info(
+                    "Preserving user-provided splitting_ops for %s on NPU: %s",
+                    compilation_config.cudagraph_mode,
+                    compilation_config.splitting_ops,
+                )
             warning_message = """\033[91m
             **********************************************************************************
             * WARNING: You have enabled the *full graph* feature.
@@ -730,13 +738,15 @@ class NPUPlatform(Platform):
 
         # TODO(Levi-JQ): another PR to normalize the enabling logic for sp/fc2
         flashcomm_v2_enabled = flashcomm2_enable() and tp_world_size > 1 and num_tokens is not None
+        if attn_metadata is not None:
+            # Use the true token count from attention metadata so flashcomm
+            # helpers can still unpad FIA/graph padding correctly.
+            num_tokens = list(attn_metadata.values())[0].num_actual_tokens
+
         pad_size = 0
         padded_length = None
         if flash_comm_v1_enabled or flashcomm_v2_enabled:
             pad_size = (tp_world_size - (num_tokens % tp_world_size)) % tp_world_size
-
-        if num_tokens is None and attn_metadata is not None:
-            num_tokens = list(attn_metadata.values())[0].num_actual_tokens
         dp_world_size = get_dp_group().world_size
         if dp_world_size > 1 and dp_metadata is not None:
             max_tokens_across_dp = dp_metadata.max_tokens_across_dp_cpu.item()

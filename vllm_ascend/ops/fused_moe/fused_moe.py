@@ -17,6 +17,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
+import json
+import os
 
 import torch
 import torch.nn.functional as F
@@ -51,6 +53,34 @@ from vllm_ascend.utils import (
     shared_experts_calculation_stream,
     vllm_version_is,
 )
+
+
+def _dump_moe_route_debug(stage: str, **values) -> None:
+    debug_file = os.getenv("VLLM_ASCEND_MOE_DEBUG_FILE")
+    if not debug_file:
+        return
+    if getattr(_EXTRA_CTX, "in_profile_run", False) or getattr(_EXTRA_CTX, "capturing", False):
+        return
+
+    rank = -1
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+
+    record = {"stage": stage, "rank": rank}
+    for key, value in values.items():
+        if isinstance(value, torch.Tensor):
+            detached = value.detach()
+            flat = detached.reshape(-1)
+            record[key] = {
+                "shape": list(detached.shape),
+                "dtype": str(detached.dtype),
+                "sample": flat[:8].cpu().tolist(),
+            }
+        else:
+            record[key] = value
+
+    with open(f"{debug_file}.rank{rank}.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
 
 
 @dataclass
@@ -480,6 +510,12 @@ class AscendFusedMoE(FusedMoE):
         mc2_mask = prepare_output.mc2_mask
         padded_hidden_states_shape = prepare_output.padded_hidden_states_shape
         pertoken_scale = prepare_output.pertoken_scale
+        _dump_moe_route_debug(
+            "after_prepare",
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            pertoken_scale=pertoken_scale,
+        )
 
         # Make sure the default stream waits for the gate stream to finish.
         if self.multistream_overlap_gate:
@@ -509,6 +545,7 @@ class AscendFusedMoE(FusedMoE):
             global_redundant_expert_num=self.global_redundant_expert_num,
             mc2_mask=mc2_mask,
         )
+        _dump_moe_route_debug("after_fused_experts", routed_out=fused_experts_results.routed_out)
 
         if self.dynamic_eplb:
             expert_tokens = fused_experts_results.expert_tokens
@@ -534,6 +571,7 @@ class AscendFusedMoE(FusedMoE):
             reduce_results=self.reduce_results,
             padded_hidden_states_shape=padded_hidden_states_shape,
         )
+        _dump_moe_route_debug("after_finalize", routed_out=routed_out)
 
         if return_with_event:
             return FusedMoEResult(

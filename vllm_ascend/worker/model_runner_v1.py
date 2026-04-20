@@ -17,7 +17,9 @@
 # Adapted from vllm-project/vllm/vllm/worker/gpu_model_runner.py
 #
 
+import json
 import math
+import os
 import sys
 import time
 from collections import defaultdict
@@ -130,7 +132,11 @@ from vllm_ascend.utils import (
     kv_cache_spec_uses_sparse_c8,
     lmhead_tp_enable,
     set_weight_prefetch_method,
+<<<<<<< Updated upstream
     should_skip_allreduce_across_dp_group,
+=======
+    update_aclgraph_sizes,
+>>>>>>> Stashed changes
 )
 from vllm_ascend.worker.npu_input_batch import NPUInputBatch
 from vllm_ascend.worker.pcp_utils import PCPManager
@@ -437,6 +443,7 @@ class NPUModelRunner(GPUModelRunner):
             self.cudagraph_batch_sizes = sorted(self.compilation_config.cudagraph_capture_sizes)
         else:
             self.cudagraph_batch_sizes = []
+        self.full_decode_only_prefill_capture_sizes = self._derive_full_decode_only_prefill_capture_sizes()
         self.mamba_state_idx: dict[str, int] = {}
         self._mamba_copy_bufs: mamba_utils.MambaCopyBuffers | None = None
 
@@ -486,6 +493,99 @@ class NPUModelRunner(GPUModelRunner):
             and not self.model_config.enforce_eager
         )
 
+<<<<<<< Updated upstream
+=======
+    def _derive_full_decode_only_prefill_capture_sizes(self) -> list[int]:
+        if self.compilation_config.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY:
+            return []
+
+        try:
+            temp_vllm_config = deepcopy(self.vllm_config)
+            temp_compilation_config = temp_vllm_config.compilation_config
+            temp_compilation_config.cudagraph_mode = CUDAGraphMode.PIECEWISE
+            temp_compilation_config.cudagraph_capture_sizes = None
+            temp_compilation_config.max_cudagraph_capture_size = None
+            temp_vllm_config._set_cudagraph_sizes()
+            update_aclgraph_sizes(temp_vllm_config)
+            capture_sizes = temp_vllm_config.compilation_config.cudagraph_capture_sizes or []
+            return sorted(size for size in capture_sizes if size > 0)
+        except Exception as exc:
+            logger.warning(
+                "Failed to derive PIECEWISE prefill padding sizes for FULL_DECODE_ONLY: %s",
+                exc,
+            )
+            return []
+
+    def _maybe_align_full_decode_only_prefill_batch_descriptor(
+        self,
+        cudagraph_mode: CUDAGraphMode,
+        batch_descriptor: BatchDescriptor,
+        is_all_decode: bool,
+    ) -> tuple[CUDAGraphMode, BatchDescriptor]:
+        if self.compilation_config.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY:
+            return cudagraph_mode, batch_descriptor
+        if is_all_decode or cudagraph_mode != CUDAGraphMode.NONE:
+            return cudagraph_mode, batch_descriptor
+        if not self.full_decode_only_prefill_capture_sizes:
+            return cudagraph_mode, batch_descriptor
+
+        num_tokens = batch_descriptor.num_tokens
+        aligned_tokens = next(
+            (size for size in self.full_decode_only_prefill_capture_sizes if size >= num_tokens),
+            num_tokens,
+        )
+        if aligned_tokens == num_tokens:
+            return cudagraph_mode, batch_descriptor
+
+        return cudagraph_mode, BatchDescriptor(
+            num_tokens=aligned_tokens,
+            num_reqs=batch_descriptor.num_reqs,
+            uniform=batch_descriptor.uniform,
+            has_lora=batch_descriptor.has_lora,
+            num_active_loras=batch_descriptor.num_active_loras,
+        )
+
+    def _skip_all_reduce_across_dp_group(self, is_draft_model=False) -> bool:
+        """
+        Decide whether to skip the all-reduce across the data-parallel (DP) group.
+
+        Skipping is applicable for all dense models and for moe models only on ranks
+        that act as KV consumers. We skip the DP all-reduce when either:
+        - Both the prefill and decode communication methods are MC2 (or FUSED_MC2), or
+        - Decode requires MC2 and ascend_config.recompute_scheduler_enable is True.
+        """
+        # For dense models, since we don't actually need dp communication, we simply skip it.
+        # This usually happens when main model is moe while eagle draft model is dense.
+        is_context_moe_model = (
+            is_drafter_moe_model(self.vllm_config) if is_draft_model else is_moe_model(self.vllm_config)
+        )
+        if not is_context_moe_model:
+            return True
+
+        # Only applicable to MoE models on KV consumer ranks.
+        if not self.is_kv_consumer:
+            return False
+
+        def needs_mc2(num_tokens: int) -> bool:
+            return select_moe_comm_method(num_tokens, self.vllm_config) in {MoECommType.MC2, MoECommType.FUSED_MC2}
+
+        # Determine whether decode must use MC2. Use max cudagraph capture size
+        # if available, otherwise use the maximal uniform decode token count.
+        if self.compilation_config.cudagraph_capture_sizes:
+            potential_max_tokens = self.compilation_config.max_cudagraph_capture_size
+        else:
+            potential_max_tokens = self.max_num_reqs * self.uniform_decode_query_len
+        decode_must_use_mc2 = needs_mc2(potential_max_tokens)
+
+        # For prefill, use the scheduler's max_num_batched_tokens for a single
+        # batch.
+        prefill_must_use_mc2 = needs_mc2(self.vllm_config.scheduler_config.max_num_batched_tokens)
+
+        # Skip all-reduce if decode requires MC2 and either prefill also
+        # requires MC2 or recompute-based scheduler is enabled.
+        return decode_must_use_mc2 and (prefill_must_use_mc2 or self.ascend_config.recompute_scheduler_enable)
+
+>>>>>>> Stashed changes
     def _sync_metadata_across_dp(
         self, num_tokens: int, with_prefill: bool = False, is_draft_model: bool = False
     ) -> tuple[int, torch.Tensor | None, bool]:
@@ -973,6 +1073,87 @@ class NPUModelRunner(GPUModelRunner):
             total_num_scheduled_tokens,
         )
 
+    def _clear_padded_model_inputs(self, num_actual_tokens: int, num_tokens_padded: int) -> None:
+        if num_tokens_padded <= num_actual_tokens:
+            return
+
+        pad_slice = slice(num_actual_tokens, num_tokens_padded)
+
+        if self.uses_mrope:
+            self.mrope_positions.gpu[:, pad_slice].zero_()
+        elif self.uses_xdrope_dim > 0:
+            self.xdrope_positions.gpu[:, pad_slice].zero_()
+        else:
+            self.positions.gpu[pad_slice].zero_()
+
+        if self.is_multimodal_model and not self.model_config.is_encoder_decoder or self.enable_prompt_embeds:
+            self.inputs_embeds.gpu[pad_slice].zero_()
+            if self.enable_prompt_embeds:
+                self.is_token_ids.gpu[pad_slice].fill_(True)
+        else:
+            self.input_ids.gpu[pad_slice].zero_()
+
+    def _dump_batch_debug(
+        self,
+        num_actual_tokens: int,
+        num_tokens_padded: int,
+        num_reqs: int,
+        num_reqs_padded: int,
+    ) -> None:
+        debug_file = os.getenv("VLLM_ASCEND_DEBUG_BATCH_FILE")
+        if not debug_file:
+            return
+
+        positions = self.positions.gpu[:num_tokens_padded].cpu().tolist()
+        query_start_loc = self.query_start_loc.gpu[: num_reqs_padded + 2].cpu().tolist()
+        seq_lens = self.seq_lens.gpu[:num_reqs_padded].cpu().tolist()
+        record = {
+            "num_actual_tokens": num_actual_tokens,
+            "num_tokens_padded": num_tokens_padded,
+            "num_reqs": num_reqs,
+            "num_reqs_padded": num_reqs_padded,
+            "num_computed_tokens_cpu": self.input_batch.num_computed_tokens_cpu[:num_reqs].tolist(),
+            "positions": positions,
+            "query_start_loc": query_start_loc,
+            "seq_lens": seq_lens,
+        }
+        if self.is_multimodal_model and not self.model_config.is_encoder_decoder or self.enable_prompt_embeds:
+            record["inputs_embeds_shape"] = list(self.inputs_embeds.gpu[:num_tokens_padded].shape)
+        else:
+            record["input_ids"] = self.input_ids.gpu[:num_tokens_padded].cpu().tolist()
+
+        with open(debug_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    def _dump_hidden_debug(
+        self,
+        stage: str,
+        hidden_states: torch.Tensor,
+        logits_indices: torch.Tensor | None = None,
+    ) -> None:
+        debug_file = os.getenv("VLLM_ASCEND_DEBUG_HIDDEN_FILE")
+        if not debug_file:
+            return
+
+        record: dict[str, object] = {
+            "stage": stage,
+            "shape": list(hidden_states.shape),
+            "dtype": str(hidden_states.dtype),
+            "flat_sample": hidden_states.reshape(-1)[:8].detach().cpu().tolist(),
+        }
+        if hidden_states.ndim >= 2 and hidden_states.shape[0] > 0:
+            record["row0"] = hidden_states[0, :8].detach().cpu().tolist()
+            record["row_last"] = hidden_states[-1, :8].detach().cpu().tolist()
+        if logits_indices is not None:
+            record["logits_indices"] = logits_indices.detach().cpu().tolist()
+            if logits_indices.numel() > 0:
+                sample_hidden_states = hidden_states[logits_indices]
+                record["sample_shape"] = list(sample_hidden_states.shape)
+                record["sample_row0"] = sample_hidden_states[0, :8].detach().cpu().tolist()
+
+        with open(debug_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
     def _build_attn_state(self, num_reqs, num_scheduled_tokens, num_valid_tokens):
         if np.all(self.input_batch.num_computed_tokens_cpu[:num_reqs] == 0):
             attn_state = AscendAttentionState.PrefillNoCache
@@ -1407,6 +1588,7 @@ class NPUModelRunner(GPUModelRunner):
                     num_reqs_padded = self._pad_query_start_loc_for_fia(
                         num_tokens_padded, num_reqs_padded, num_reqs, cudagraph_mode, batch_desc.num_reqs
                     )
+<<<<<<< Updated upstream
                     
                     
                     # FIA may add a virtual request in Mixed Batch scenarios.
@@ -1416,6 +1598,16 @@ class NPUModelRunner(GPUModelRunner):
                     # != num_tokens_unpadded due to SP alignment (e.g., 29292 vs 29290).
                     if enable_sp() and num_reqs_padded > old_num_reqs_padded:
                         if num_tokens_padded == num_tokens_unpadded:
+=======
+                    if enable_sp() and num_reqs_padded > old_num_reqs_padded:
+                        # Outside full cudagraph capture, SP keeps the real model input
+                        # unpadded. Drop the synthetic FIA-only request so the
+                        # attention metadata still reflects only real requests.
+                        if cudagraph_mode != CUDAGraphMode.FULL:
+                            num_reqs_padded = old_num_reqs_padded
+                            self.query_start_loc.np[num_reqs_padded + 1] = 0
+                        elif num_tokens_padded == num_tokens_unpadded:
+>>>>>>> Stashed changes
                             num_reqs_padded = old_num_reqs_padded
                             self.query_start_loc.np[num_reqs_padded + 1] = 0
                         if num_tokens_padded != num_tokens_unpadded and not self.speculative_config:
@@ -1439,6 +1631,17 @@ class NPUModelRunner(GPUModelRunner):
                     num_scheduled_tokens_np=num_scheduled_tokens_np,
                     cascade_attn_prefix_lens=cascade_attn_prefix_lens,
                 )
+
+            self._clear_padded_model_inputs(
+                scheduler_output.total_num_scheduled_tokens,
+                num_tokens_padded,
+            )
+            self._dump_batch_debug(
+                scheduler_output.total_num_scheduled_tokens,
+                num_tokens_padded,
+                num_reqs,
+                num_reqs_padded,
+            )
 
             (
                 input_ids,
@@ -1551,7 +1754,9 @@ class NPUModelRunner(GPUModelRunner):
                         self.debugger.step()
                     return output
 
+                self._dump_hidden_debug("post_model_forward", hidden_states, logits_indices)
                 sample_hidden_states = hidden_states[logits_indices]
+                self._dump_hidden_debug("sample_hidden_states", sample_hidden_states)
                 logits = self.model.compute_logits(sample_hidden_states)
             else:
                 # Rare case.
@@ -1931,9 +2136,36 @@ class NPUModelRunner(GPUModelRunner):
     @staticmethod
     def _all_gather_hidden_states(hidden_states):
         hidden_states = tensor_model_parallel_all_gather(hidden_states, 0)
-        pad_size = get_forward_context().pad_size
+        forward_context = get_forward_context()
+        pad_size = forward_context.pad_size
         if pad_size > 0:
             hidden_states = hidden_states[:-pad_size, :]
+        else:
+            attn_metadata = forward_context.attn_metadata
+            num_actual_tokens = getattr(attn_metadata, "num_actual_tokens", None)
+            if num_actual_tokens is None:
+                if isinstance(attn_metadata, dict) and attn_metadata:
+                    num_actual_tokens = getattr(next(iter(attn_metadata.values())), "num_actual_tokens", None)
+                elif isinstance(attn_metadata, list) and attn_metadata:
+                    first_item = attn_metadata[0]
+                    if isinstance(first_item, dict) and first_item:
+                        num_actual_tokens = getattr(next(iter(first_item.values())), "num_actual_tokens", None)
+            if num_actual_tokens is not None and hidden_states.shape[0] > num_actual_tokens:
+                hidden_states = hidden_states[:num_actual_tokens, :]
+
+        debug_file = os.getenv("VLLM_ASCEND_DEBUG_HIDDEN_FILE")
+        if debug_file:
+            record = {
+                "stage": "all_gather_hidden_states",
+                "shape": list(hidden_states.shape),
+                "dtype": str(hidden_states.dtype),
+                "pad_size": pad_size,
+                "num_actual_tokens": num_actual_tokens if 'num_actual_tokens' in locals() else None,
+                "row0": hidden_states[0, :8].detach().cpu().tolist() if hidden_states.shape[0] > 0 else [],
+                "row_last": hidden_states[-1, :8].detach().cpu().tolist() if hidden_states.shape[0] > 0 else [],
+            }
+            with open(debug_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
 
         return hidden_states
 
@@ -2138,6 +2370,11 @@ class NPUModelRunner(GPUModelRunner):
             )
 
         cudagraph_mode, batch_descriptor = dispatch_cudagraph(num_tokens_padded, use_cascade_attn or has_encoder_output)
+        cudagraph_mode, batch_descriptor = self._maybe_align_full_decode_only_prefill_batch_descriptor(
+            cudagraph_mode,
+            batch_descriptor,
+            is_all_decode,
+        )
         num_tokens_padded = batch_descriptor.num_tokens
         if enable_sp(self.vllm_config):
             assert batch_descriptor.num_tokens % self.vllm_config.parallel_config.tensor_parallel_size == 0, (

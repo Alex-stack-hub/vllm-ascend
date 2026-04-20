@@ -56,6 +56,7 @@ from vllm.distributed import (
     tensor_model_parallel_all_reduce,
     tensor_model_parallel_reduce_scatter,
 )
+from vllm.forward_context import get_forward_context
 from vllm.distributed.parallel_state import get_tp_group
 from vllm.model_executor.models.utils import extract_layer_index
 
@@ -123,6 +124,23 @@ class CustomLinearOp:
         if not self.return_bias:
             return output
         return output, output_bias
+
+
+def _resolve_num_actual_tokens(attn_metadata) -> int | None:
+    if attn_metadata is None:
+        return None
+
+    value = getattr(attn_metadata, "num_actual_tokens", None)
+    if value is not None:
+        return int(value)
+
+    if isinstance(attn_metadata, dict) and attn_metadata:
+        return _resolve_num_actual_tokens(next(iter(attn_metadata.values())))
+
+    if isinstance(attn_metadata, list) and attn_metadata:
+        return _resolve_num_actual_tokens(attn_metadata[0])
+
+    return None
 
 
 class CustomColumnParallelOp(CustomLinearOp):
@@ -571,6 +589,18 @@ class SequenceRowParallelOp(CustomRowParallelOp):
             output = torch.add(output, torch.mul(quant_bias, deq_scale).to(self.layer.params_dtype))
         else:
             output_parallel = self.layer.quant_method.apply(self.layer, x, bias=bias_)
+            num_actual_tokens = None
+            try:
+                forward_context = get_forward_context()
+            except AssertionError:
+                forward_context = None
+            if forward_context is not None:
+                num_actual_tokens = _resolve_num_actual_tokens(getattr(forward_context, "attn_metadata", None))
+            if num_actual_tokens is not None and output_parallel.shape[0] > num_actual_tokens:
+                output_parallel = output_parallel[:num_actual_tokens]
+            pad_tokens = (world_size - (output_parallel.shape[0] % world_size)) % world_size
+            if pad_tokens > 0:
+                output_parallel = F.pad(output_parallel, (0, 0, 0, pad_tokens))
             output = tensor_model_parallel_reduce_scatter(output_parallel, 0)
 
         return output

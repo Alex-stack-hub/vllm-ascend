@@ -15,6 +15,8 @@
 # This file is a part of the vllm-ascend project.
 
 from abc import ABC, abstractmethod
+import json
+import os
 
 import torch
 import torch.distributed as dist
@@ -34,6 +36,34 @@ from vllm_ascend.distributed.utils import fc3_all_gather_and_maybe_unpad_impl
 from vllm_ascend.ops.fused_moe.moe_runtime_args import MoEPrepareOutput
 from vllm_ascend.quantization.quant_type import QuantType
 from vllm_ascend.utils import enable_sp, enable_sp_by_pass, npu_stream_switch, prefill_context_parallel_enable
+
+
+def _dump_moe_prepare_debug(stage: str, **values) -> None:
+    debug_file = os.getenv("VLLM_ASCEND_MOE_DEBUG_FILE")
+    if not debug_file:
+        return
+    if getattr(_EXTRA_CTX, "in_profile_run", False) or getattr(_EXTRA_CTX, "capturing", False):
+        return
+
+    rank = -1
+    if dist.is_available() and dist.is_initialized():
+        rank = dist.get_rank()
+
+    record = {"stage": stage, "rank": rank}
+    for key, value in values.items():
+        if isinstance(value, torch.Tensor):
+            detached = value.detach()
+            flat = detached.reshape(-1)
+            record[key] = {
+                "shape": list(detached.shape),
+                "dtype": str(detached.dtype),
+                "sample": flat[:8].cpu().tolist(),
+            }
+        else:
+            record[key] = value
+
+    with open(f"{debug_file}.rank{rank}.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
 
 
 class PrepareAndFinalize(ABC):
@@ -309,6 +339,10 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
     TP AG → Attn → TP RS → EP AG → MoE → EP RS
     """
 
+    @staticmethod
+    def _use_ep_group() -> bool:
+        return bool(getattr(_EXTRA_CTX, "flash_comm_v1_enabled", False) or enable_sp_by_pass())
+
     def prepare(
         self,
         hidden_states: torch.Tensor,
@@ -324,7 +358,15 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
         Returns:
             MoEPrepareOutput with global tensors.
         """
-        if enable_sp() or enable_sp_by_pass():
+        use_ep_group = self._use_ep_group()
+        _dump_moe_prepare_debug(
+            "prepare_select",
+            use_ep_group=use_ep_group,
+            flash_comm_v1_enabled=getattr(_EXTRA_CTX, "flash_comm_v1_enabled", False),
+            enable_sp=enable_sp(),
+            enable_sp_by_pass=enable_sp_by_pass(),
+        )
+        if use_ep_group:
             return self._prepare_with_ep_group(hidden_states, router_logits, quant_type)
 
         return self._prepare_with_dp_group(hidden_states, router_logits, enable_shared_expert_dp, replace_allreduce)
@@ -332,6 +374,13 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
     def _prepare_with_ep_group(
         self, hidden_states: torch.Tensor, router_logits: torch.Tensor, quant_type=QuantType.NONE
     ) -> MoEPrepareOutput:
+        _dump_moe_prepare_debug(
+            "prepare_ep_input",
+            multistream_overlap_gate=self.multistream_overlap_gate,
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            pad_size=_EXTRA_CTX.pad_size,
+        )
         pertoken_scale = None
         if quant_type == QuantType.W8A8:
             hidden_states, pertoken_scale = torch_npu.npu_dynamic_quant(hidden_states)
@@ -358,6 +407,13 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
 
         if self.multistream_overlap_gate:
             torch.npu.current_stream().wait_stream(PrepareAndFinalize.quant_stream)
+
+        _dump_moe_prepare_debug(
+            "prepare_ep_output",
+            hidden_states=hidden_states,
+            router_logits=router_logits,
+            pertoken_scale=pertoken_scale,
+        )
 
         return MoEPrepareOutput(
             hidden_states=hidden_states,
@@ -437,7 +493,15 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
         Returns:
             Tensor with shape [local_num_tokens, hidden_size]
         """
-        if enable_sp() or enable_sp_by_pass():
+        use_ep_group = self._use_ep_group()
+        _dump_moe_prepare_debug(
+            "finalize_select",
+            use_ep_group=use_ep_group,
+            flash_comm_v1_enabled=getattr(_EXTRA_CTX, "flash_comm_v1_enabled", False),
+            enable_sp=enable_sp(),
+            enable_sp_by_pass=enable_sp_by_pass(),
+        )
+        if use_ep_group:
             return self._finalize_with_ep_group(hidden_states)
 
         return self._finalize_with_dp_group(hidden_states, reduce_results)
@@ -452,7 +516,9 @@ class PrepareAndFinalizeWithAllGather(PrepareAndFinalize):
         2 Reduce_results is True usually happens when model has no shared experts. We still do reduce scatter
         here, then skip allreudce in FusedMoe.
         """
+        _dump_moe_prepare_debug("finalize_ep_input", hidden_states=hidden_states)
         hidden_states = torch.ops.vllm.maybe_pad_and_reduce(hidden_states, True)
+        _dump_moe_prepare_debug("finalize_ep_output", hidden_states=hidden_states)
 
         return hidden_states
 
