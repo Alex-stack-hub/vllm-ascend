@@ -132,11 +132,7 @@ from vllm_ascend.utils import (
     kv_cache_spec_uses_sparse_c8,
     lmhead_tp_enable,
     set_weight_prefetch_method,
-<<<<<<< Updated upstream
-    should_skip_allreduce_across_dp_group,
-=======
     update_aclgraph_sizes,
->>>>>>> Stashed changes
 )
 from vllm_ascend.worker.npu_input_batch import NPUInputBatch
 from vllm_ascend.worker.pcp_utils import PCPManager
@@ -493,8 +489,6 @@ class NPUModelRunner(GPUModelRunner):
             and not self.model_config.enforce_eager
         )
 
-<<<<<<< Updated upstream
-=======
     def _derive_full_decode_only_prefill_capture_sizes(self) -> list[int]:
         if self.compilation_config.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY:
             return []
@@ -585,7 +579,6 @@ class NPUModelRunner(GPUModelRunner):
         # requires MC2 or recompute-based scheduler is enabled.
         return decode_must_use_mc2 and (prefill_must_use_mc2 or self.ascend_config.recompute_scheduler_enable)
 
->>>>>>> Stashed changes
     def _sync_metadata_across_dp(
         self, num_tokens: int, with_prefill: bool = False, is_draft_model: bool = False
     ) -> tuple[int, torch.Tensor | None, bool]:
@@ -1588,17 +1581,6 @@ class NPUModelRunner(GPUModelRunner):
                     num_reqs_padded = self._pad_query_start_loc_for_fia(
                         num_tokens_padded, num_reqs_padded, num_reqs, cudagraph_mode, batch_desc.num_reqs
                     )
-<<<<<<< Updated upstream
-                    
-                    
-                    # FIA may add a virtual request in Mixed Batch scenarios.
-                    # here we revert the request added by _pad_query_start_loc_for_fia if SP is enabled.
-                    # RELAXED CONDITION: Check if num_reqs_padded was actually increased, rather than
-                    # strictly checking token equality. This handles cases where num_tokens_padded
-                    # != num_tokens_unpadded due to SP alignment (e.g., 29292 vs 29290).
-                    if enable_sp() and num_reqs_padded > old_num_reqs_padded:
-                        if num_tokens_padded == num_tokens_unpadded:
-=======
                     if enable_sp() and num_reqs_padded > old_num_reqs_padded:
                         # Outside full cudagraph capture, SP keeps the real model input
                         # unpadded. Drop the synthetic FIA-only request so the
@@ -1607,7 +1589,6 @@ class NPUModelRunner(GPUModelRunner):
                             num_reqs_padded = old_num_reqs_padded
                             self.query_start_loc.np[num_reqs_padded + 1] = 0
                         elif num_tokens_padded == num_tokens_unpadded:
->>>>>>> Stashed changes
                             num_reqs_padded = old_num_reqs_padded
                             self.query_start_loc.np[num_reqs_padded + 1] = 0
                         if num_tokens_padded != num_tokens_unpadded and not self.speculative_config:

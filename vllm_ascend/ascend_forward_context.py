@@ -30,7 +30,6 @@ class MoECommType(Enum):
     FUSED_MC2 = 3
 
 
-<<<<<<< Updated upstream
 _MRV2_IN_PROFILE_RUN: ContextVar[bool] = ContextVar("_MRV2_IN_PROFILE_RUN", default=False)
 
 
@@ -52,7 +51,6 @@ def override_mrv2_in_profile_run(enabled: bool):
 
 def get_mrv2_in_profile_run() -> bool:
     return _MRV2_IN_PROFILE_RUN.get()
-=======
 def _prefer_allgather_moe_comm(vllm_config: VllmConfig) -> bool:
     model_config = vllm_config.model_config
     candidates = (
@@ -62,7 +60,6 @@ def _prefer_allgather_moe_comm(vllm_config: VllmConfig) -> bool:
     )
     model_types = {getattr(config, "model_type", None) for config in candidates if config is not None}
     return "gemma4" in model_types or "gemma4_text" in model_types
->>>>>>> Stashed changes
 
 
 @contextmanager
