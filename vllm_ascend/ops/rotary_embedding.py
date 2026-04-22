@@ -589,6 +589,13 @@ class AscendApplyRotaryEmb(ApplyRotaryEmb):
 
 
 class AscendGemma4RotaryEmbedding(AscendRotaryEmbedding):
+    def __setattr__(self, name, value):
+        # If _parameters is not initialized yet, set the attribute directly
+        if not hasattr(self, '_parameters') and name in ['rope_angles', 'nope_angles']:
+            object.__setattr__(self, name, value)
+        else:
+            super().__setattr__(name, value)
+
     def __init__(
         self,
         head_size: int,
