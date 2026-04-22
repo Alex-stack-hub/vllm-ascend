@@ -598,6 +598,11 @@ class AscendGemma4RotaryEmbedding(AscendRotaryEmbedding):
         is_neox_style: bool,
         dtype: torch.dtype,
     ) -> None:
+        # Number of rotation angle pairs (from partial_rotary_factor)
+        self.rope_angles = rotary_dim // 2
+        # Non-rotated angle pairs per half
+        self.nope_angles = (head_size // 2) - self.rope_angles
+
         # Important: set rotary_dim = head_size so the base class's
         # forward_static applies rotation to ALL dims of the cos/sin cache.
         # The non-rotated dims will have cos=1, sin=0 (identity) thanks
@@ -609,24 +614,7 @@ class AscendGemma4RotaryEmbedding(AscendRotaryEmbedding):
             base,
             is_neox_style,
             dtype,
-            init_cache=False,  # Delay cache initialization
         )
-        
-        # Number of rotation angle pairs (from partial_rotary_factor)
-        self.rope_angles = rotary_dim // 2
-        # Non-rotated angle pairs per half
-        self.nope_angles = (head_size // 2) - self.rope_angles
-        
-        # Now compute the cos/sin cache with the correct rope_angles and nope_angles
-        cache = self._compute_cos_sin_cache()
-        if not self.use_flashinfer:
-            cache = cache.to(dtype)
-        self.cos_sin_cache: torch.Tensor
-        self.register_buffer("cos_sin_cache", cache, persistent=False)
-        
-        # Record the cache for Ascend-specific optimizations
-        _record_cos_sin_cache(self.cos_sin_cache)
-        _record_cos_and_sin_cache_interleaved(self.cos_sin_cache)
 
     def _compute_inv_freq(self, base: float) -> torch.Tensor:
         """Compute frequencies matching HF proportional RoPE.
