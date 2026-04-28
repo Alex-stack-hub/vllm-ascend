@@ -379,7 +379,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         self.hidden_size = self.num_heads * self.head_size
         self.kv_cache_dtype = kv_cache_dtype
         self.sliding_window = sliding_window
-        self.kv_share_target_layer_name = kv_sharing_target_layer_name
+        self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
         if alibi_slopes is not None:
             alibi_slopes = torch.tensor(alibi_slopes, dtype=torch.float32, device="npu")
         self.alibi_slopes = alibi_slopes
@@ -394,9 +394,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         )
         self.sinks = sinks
 
-    def _use_shared_kv_cache(self) -> bool:
+    def _uses_shared_kv_cache(self) -> bool:
         return(
-            self.kv_share_target_layer_name is not None
+            self.kv_sharing_target_layer_name is not None
             and self.key_cache is not None
             and self.value_cache is not None
         )
@@ -724,7 +724,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 )
 
         if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
-            if self._use_shared_kv_cache():
+            if self._uses_shared_kv_cache():
                 batch_size = attn_metadata.seq_lens.shape[0]
                 block_table = attn_metadata.block_tables[:batch_size, :]
                 num_block, block_size, _, _ = self.key_cache.shape  # type: ignore
@@ -954,6 +954,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and self.sinks is None
         ):
             return self._forward_fia_slidingwindow(query, attn_metadata, output)
+        if (
+            attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
+            and self.attn_type != AttentionType.ENCODER_DECODER
+            and self.sliding_window is None
+            and self.sinks is None
+        ):
+            return self._forward_fia_fullattention(query, key, value, attn_metadata, output)
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
             key, value, attn_metadata, kv_cache
         )
@@ -1084,7 +1091,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_metadata.reshape_cache_event = torch.npu.Event()
             if self.key_cache is None:
                 self.key_cache, self.value_cache = kv_cache[0], kv_cache[1]
-            if self.kv_share_target_layer_name is not None:
+            if self.kv_sharing_target_layer_name is not None:
                 return query, key, value, output
             slots = attn_metadata.slot_mapping
             encoder_decoder = self.attn_type == AttentionType.ENCODER_DECODER
