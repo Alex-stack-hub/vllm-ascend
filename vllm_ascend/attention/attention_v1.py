@@ -946,13 +946,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
             key = key[:num_tokens]
             value = value[:num_tokens]
         if (
-            attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
-            and self.attn_type != AttentionType.ENCODER_DECODER
-            and self.sliding_window is None
-            and self.sinks is None
-        ):
-            return self._forward_fia_fullattention(query, key, value, attn_metadata, output)
-        if (
             self.head_size == 512
             and self.sinks is None
         ):
