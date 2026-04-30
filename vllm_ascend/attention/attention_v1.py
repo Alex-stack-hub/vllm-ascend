@@ -971,6 +971,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         if (
             attn_metadata.attn_state == AscendAttentionState.PrefillNoCache
             and self.attn_type != AttentionType.ENCODER_DECODER
+            and not self._uses_shared_kv_cache()
         ):
             key = key[:num_tokens]
             value = value[:num_tokens]
