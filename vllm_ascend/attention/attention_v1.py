@@ -943,7 +943,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
-        if _EXTRA_CTX.capturing and self.head_size != 512:
+        # Don't use full_graph_fia when KV sharing is enabled or head_size == 512
+        if _EXTRA_CTX.capturing and self.head_size != 512 and not self._uses_shared_kv_cache():
             attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
             output[:num_tokens] = attn_output[:num_tokens]
             return output
