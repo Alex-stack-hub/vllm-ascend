@@ -960,6 +960,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             and self.attn_type != AttentionType.ENCODER_DECODER
             and self.sliding_window is None
             and self.sinks is None
+            and not self._uses_shared_kv_cache()
         ):
             return self._forward_fia_fullattention(query, key, value, attn_metadata, output)
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
