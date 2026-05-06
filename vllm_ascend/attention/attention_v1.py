@@ -565,6 +565,21 @@ class AscendAttentionBackendImpl(AttentionImpl):
     ) -> torch.Tensor:
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(key, value, attn_metadata)
 
+        # Sliding window layers must use swa_mask instead of the default causal
+        # mask.  In FULL graph capture, all layers go through this path (unlike
+        # eager mode where SWA uses _forward_fia_slidingwindow with
+        # pre_tokens=sliding_window).  Using a plain causal mask on a SWA layer
+        # would let it attend to all previous tokens instead of the last
+        # sliding_window tokens, producing garbled output.
+        if self.sliding_window is not None:
+            if attn_metadata.swa_mask is not None:
+                atten_mask = attn_metadata.swa_mask
+            else:
+                atten_mask = self.attn_mask_builder.get_swa_mask(
+                    self.model_config.dtype, self.sliding_window)
+        else:
+            atten_mask = attn_metadata.attn_mask
+
         num_tokens = attn_metadata.actual_seq_lengths_q[-1]
         if _EXTRA_CTX.is_draft_model:
             graph_params = get_draft_graph_params()
@@ -582,7 +597,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 query=query,
                 key=key,
                 value=value,
-                atten_mask=attn_metadata.attn_mask,
+                atten_mask=atten_mask,
                 block_table=block_table,
                 input_layout="TND",
                 block_size=block_size,
@@ -611,7 +626,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 weak_ref_tensors(key),
                 weak_ref_tensors(value),
                 weak_ref_tensors(block_table),
-                weak_ref_tensors(attn_metadata.attn_mask),
+                weak_ref_tensors(atten_mask),
                 block_size,
                 actual_seq_lengths_kv,
                 actual_seq_lengths_q,
@@ -628,7 +643,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             query=query,
             key=key,
             value=value,
-            atten_mask=attn_metadata.attn_mask,
+            atten_mask=atten_mask,
             block_table=block_table,
             input_layout="TND",
             block_size=block_size,
