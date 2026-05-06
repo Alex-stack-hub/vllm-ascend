@@ -463,16 +463,19 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     )
                     torch.npu.graph_task_update_end(update_stream)
                     event.record(update_stream)
-        else:
-            # FIA update logic
-            if _EXTRA_CTX.is_draft_model:
-                graph_params = get_draft_graph_params()
-                attn_metadata = draft_attn_metadatas
-                attn_keys = list(attn_metadata[0].keys())
-            else:
-                graph_params = get_graph_params()
-                attn_metadata = forward_context.attn_metadata
-                attn_keys = list(attn_metadata.keys())
+        elif _EXTRA_CTX.is_draft_model:
+            # FIA update logic (draft/EAGLE model only).
+            # For the main model this path is skipped: all FIA task group
+            # parameters are stored as weak_ref_tensors whose addresses are
+            # captured in the NPU graph. During replay the graph reads the
+            # current data from those addresses directly — no explicit update
+            # on a separate stream is needed, and doing so (via
+            # graph_task_update_begin/end on update_stream) can corrupt task
+            # group state when the update stream differs from the capture
+            # stream, causing garbled output.
+            graph_params = get_draft_graph_params()
+            attn_metadata = draft_attn_metadatas
+            attn_keys = list(attn_metadata[0].keys())
             # For Qwen3-next, since the kv_cache_config has already categorized
             # linear_attn and self_attn, the attn_metadata is first arranged with
             # self_attn followed by linear_attn. Therefore, using zip directly
@@ -483,8 +486,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             num_layers = len(attn_keys)
             if num_layers == 0:
                 return
-            if _EXTRA_CTX.is_draft_model:
-                attn_keys = attn_keys * (len(graph_params.attn_params[num_tokens]) // num_layers)
+            attn_keys = attn_keys * (len(graph_params.attn_params[num_tokens]) // num_layers)
             attn_count = 0
             with torch.npu.stream(update_stream):
                 for key, param, handle, event in zip(
@@ -509,16 +511,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         softmax_lse,
                     ) = param
 
-                    if _EXTRA_CTX.is_draft_model:
-                        draft_step = attn_count // num_layers
-                        seq_lens = attn_metadata[draft_step][key].seq_lens_list
-                        actual_seq_lengths_q = attn_metadata[draft_step][key].actual_seq_lengths_q
-                        block_tables = attn_metadata[draft_step][key].block_tables
-                        attn_count = attn_count + 1
-                    else:
-                        seq_lens = attn_metadata[key].seq_lens_list
-                        actual_seq_lengths_q = attn_metadata[key].actual_seq_lengths_q
-                        block_tables = attn_metadata[key].block_tables
+                    draft_step = attn_count // num_layers
+                    seq_lens = attn_metadata[draft_step][key].seq_lens_list
+                    actual_seq_lengths_q = attn_metadata[draft_step][key].actual_seq_lengths_q
+                    block_tables = attn_metadata[draft_step][key].block_tables
+                    attn_count = attn_count + 1
 
                     torch.npu.graph_task_update_begin(update_stream, handle)
                     torch_npu.npu_fused_infer_attention_score.out(
@@ -943,8 +940,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
-        # Don't use full_graph_fia when KV sharing is enabled or head_size == 512
-        if _EXTRA_CTX.capturing and self.head_size != 512 and not self._uses_shared_kv_cache():
+        # 对于KV共享层，只在prefill阶段禁用full_graph_fia（因为key/value是cache格式）。
+        # DecodeOnly阶段可以正常使用，因为_get_fia_params返回的cache view格式是一致的，
+        # 且update_graph_params能正确更新seq_lens和block_tables。
+        if _EXTRA_CTX.capturing and self.head_size != 512 and not (
+            self._uses_shared_kv_cache() and attn_metadata.attn_state != AscendAttentionState.DecodeOnly
+        ):
             attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
             output[:num_tokens] = attn_output[:num_tokens]
             return output
