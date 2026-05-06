@@ -21,7 +21,8 @@ from enum import Enum
 import torch
 import torch_npu
 import vllm.envs as envs_vllm
-from vllm.config import VllmConfig, get_current_vllm_config
+from vllm.config import CUDAGraphMode, VllmConfig, get_current_vllm_config
+from vllm.forward_context import get_forward_context
 from vllm.distributed import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size
 from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backend import (  # type: ignore
@@ -469,18 +470,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 graph_params = get_draft_graph_params()
                 attn_metadata = draft_attn_metadatas
                 attn_keys = list(attn_metadata[0].keys())
-                # Draft model: update on update_stream (original behavior)
-                target_stream = update_stream
             else:
                 graph_params = get_graph_params()
                 attn_metadata = forward_context.attn_metadata
                 attn_keys = list(attn_metadata.keys())
-                # Main model: update on the current stream (same stream used
-                # during capture in full_graph_fia). Updating a task group
-                # handle on a different stream (update_stream) than the one
-                # used during capture can corrupt internal task group state,
-                # causing garbled output in FULL_DECODE_ONLY mode.
-                target_stream = torch.npu.current_stream()
             # For Qwen3-next, since the kv_cache_config has already categorized
             # linear_attn and self_attn, the attn_metadata is first arranged with
             # self_attn followed by linear_attn. Therefore, using zip directly
@@ -494,7 +487,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             if _EXTRA_CTX.is_draft_model:
                 attn_keys = attn_keys * (len(graph_params.attn_params[num_tokens]) // num_layers)
             attn_count = 0
-            with torch.npu.stream(target_stream):
+            with torch.npu.stream(update_stream):
                 for key, param, handle, event in zip(
                     attn_keys,
                     graph_params.attn_params[num_tokens],
@@ -528,7 +521,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         actual_seq_lengths_q = attn_metadata[key].actual_seq_lengths_q
                         block_tables = attn_metadata[key].block_tables
 
-                    torch.npu.graph_task_update_begin(target_stream, handle)
+                    torch.npu.graph_task_update_begin(update_stream, handle)
                     torch_npu.npu_fused_infer_attention_score.out(
                         query=query,
                         key=key_cache,
@@ -546,9 +539,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         workspace=graph_params.workspaces.get(num_tokens),
                         out=[attn_output, softmax_lse],
                     )
-                    torch.npu.graph_task_update_end(target_stream)
+                    torch.npu.graph_task_update_end(update_stream)
 
-                    event.record(target_stream)
+                    event.record(update_stream)
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         super().process_weights_after_loading(act_dtype)
@@ -564,21 +557,6 @@ class AscendAttentionBackendImpl(AttentionImpl):
         output: torch.Tensor,
     ) -> torch.Tensor:
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(key, value, attn_metadata)
-
-        # Sliding window layers must use swa_mask instead of the default causal
-        # mask.  In FULL graph capture, all layers go through this path (unlike
-        # eager mode where SWA uses _forward_fia_slidingwindow with
-        # pre_tokens=sliding_window).  Using a plain causal mask on a SWA layer
-        # would let it attend to all previous tokens instead of the last
-        # sliding_window tokens, producing garbled output.
-        if self.sliding_window is not None:
-            if attn_metadata.swa_mask is not None:
-                atten_mask = attn_metadata.swa_mask
-            else:
-                atten_mask = self.attn_mask_builder.get_swa_mask(
-                    self.model_config.dtype, self.sliding_window)
-        else:
-            atten_mask = attn_metadata.attn_mask
 
         num_tokens = attn_metadata.actual_seq_lengths_q[-1]
         if _EXTRA_CTX.is_draft_model:
@@ -597,7 +575,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 query=query,
                 key=key,
                 value=value,
-                atten_mask=atten_mask,
+                atten_mask=attn_metadata.attn_mask,
                 block_table=block_table,
                 input_layout="TND",
                 block_size=block_size,
@@ -626,7 +604,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 weak_ref_tensors(key),
                 weak_ref_tensors(value),
                 weak_ref_tensors(block_table),
-                weak_ref_tensors(atten_mask),
+                weak_ref_tensors(attn_metadata.attn_mask),
                 block_size,
                 actual_seq_lengths_kv,
                 actual_seq_lengths_q,
@@ -643,7 +621,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             query=query,
             key=key,
             value=value,
-            atten_mask=atten_mask,
+            atten_mask=attn_metadata.attn_mask,
             block_table=block_table,
             input_layout="TND",
             block_size=block_size,
@@ -966,12 +944,22 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # we inherit ForwardContext in model runner v2, when enable model
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
-        # 对于KV共享层，只在prefill阶段禁用full_graph_fia（因为key/value是cache格式）。
-        # DecodeOnly阶段可以正常使用，因为_get_fia_params返回的cache view格式是一致的，
-        # 且update_graph_params能正确更新seq_lens和block_tables。
-        if _EXTRA_CTX.capturing and self.head_size != 512 and not (
-            self._uses_shared_kv_cache() and attn_metadata.attn_state != AscendAttentionState.DecodeOnly
-        ):
+        # In FULL graph mode, use eager attention paths (like PIECEWISE) instead
+        # of task groups.  The NPU graph captures the eager FIA/paged attention
+        # calls directly, avoiding the need for per-iteration graph parameter
+        # updates (graph_task_update_begin/end) which have shown cross-stream
+        # and mixed-layer-type correctness issues in FULL_DECODE_ONLY mode.
+        #
+        # Draft model (EAGLE) still uses task groups in FULL mode as it has
+        # its own handling in update_graph_params.
+        fc = get_forward_context()
+        use_task_group = (
+            _EXTRA_CTX.capturing
+            and not (fc is not None and fc.cudagraph_runtime_mode == CUDAGraphMode.FULL and not _EXTRA_CTX.is_draft_model)
+            and self.head_size != 512
+            and not self._uses_shared_kv_cache()
+        )
+        if use_task_group:
             attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
             output[:num_tokens] = attn_output[:num_tokens]
             return output
@@ -1072,7 +1060,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
         attn_metadata: AscendMetadata,
         output: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if _EXTRA_CTX.capturing:
+        fc = get_forward_context()
+        is_full_main = fc is not None and fc.cudagraph_runtime_mode == CUDAGraphMode.FULL and not _EXTRA_CTX.is_draft_model
+        if _EXTRA_CTX.capturing and not is_full_main:
             return self.full_graph_pa(query, attn_metadata, output)
         torch_npu._npu_paged_attention(
             query=query,
