@@ -463,19 +463,24 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     )
                     torch.npu.graph_task_update_end(update_stream)
                     event.record(update_stream)
-        elif _EXTRA_CTX.is_draft_model:
-            # FIA update logic (draft/EAGLE model only).
-            # For the main model this path is skipped: all FIA task group
-            # parameters are stored as weak_ref_tensors whose addresses are
-            # captured in the NPU graph. During replay the graph reads the
-            # current data from those addresses directly — no explicit update
-            # on a separate stream is needed, and doing so (via
-            # graph_task_update_begin/end on update_stream) can corrupt task
-            # group state when the update stream differs from the capture
-            # stream, causing garbled output.
-            graph_params = get_draft_graph_params()
-            attn_metadata = draft_attn_metadatas
-            attn_keys = list(attn_metadata[0].keys())
+        else:
+            # FIA update logic
+            if _EXTRA_CTX.is_draft_model:
+                graph_params = get_draft_graph_params()
+                attn_metadata = draft_attn_metadatas
+                attn_keys = list(attn_metadata[0].keys())
+                # Draft model: update on update_stream (original behavior)
+                target_stream = update_stream
+            else:
+                graph_params = get_graph_params()
+                attn_metadata = forward_context.attn_metadata
+                attn_keys = list(attn_metadata.keys())
+                # Main model: update on the current stream (same stream used
+                # during capture in full_graph_fia). Updating a task group
+                # handle on a different stream (update_stream) than the one
+                # used during capture can corrupt internal task group state,
+                # causing garbled output in FULL_DECODE_ONLY mode.
+                target_stream = torch.npu.current_stream()
             # For Qwen3-next, since the kv_cache_config has already categorized
             # linear_attn and self_attn, the attn_metadata is first arranged with
             # self_attn followed by linear_attn. Therefore, using zip directly
@@ -486,9 +491,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             num_layers = len(attn_keys)
             if num_layers == 0:
                 return
-            attn_keys = attn_keys * (len(graph_params.attn_params[num_tokens]) // num_layers)
+            if _EXTRA_CTX.is_draft_model:
+                attn_keys = attn_keys * (len(graph_params.attn_params[num_tokens]) // num_layers)
             attn_count = 0
-            with torch.npu.stream(update_stream):
+            with torch.npu.stream(target_stream):
                 for key, param, handle, event in zip(
                     attn_keys,
                     graph_params.attn_params[num_tokens],
@@ -511,13 +517,18 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         softmax_lse,
                     ) = param
 
-                    draft_step = attn_count // num_layers
-                    seq_lens = attn_metadata[draft_step][key].seq_lens_list
-                    actual_seq_lengths_q = attn_metadata[draft_step][key].actual_seq_lengths_q
-                    block_tables = attn_metadata[draft_step][key].block_tables
-                    attn_count = attn_count + 1
+                    if _EXTRA_CTX.is_draft_model:
+                        draft_step = attn_count // num_layers
+                        seq_lens = attn_metadata[draft_step][key].seq_lens_list
+                        actual_seq_lengths_q = attn_metadata[draft_step][key].actual_seq_lengths_q
+                        block_tables = attn_metadata[draft_step][key].block_tables
+                        attn_count = attn_count + 1
+                    else:
+                        seq_lens = attn_metadata[key].seq_lens_list
+                        actual_seq_lengths_q = attn_metadata[key].actual_seq_lengths_q
+                        block_tables = attn_metadata[key].block_tables
 
-                    torch.npu.graph_task_update_begin(update_stream, handle)
+                    torch.npu.graph_task_update_begin(target_stream, handle)
                     torch_npu.npu_fused_infer_attention_score.out(
                         query=query,
                         key=key_cache,
@@ -535,9 +546,9 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         workspace=graph_params.workspaces.get(num_tokens),
                         out=[attn_output, softmax_lse],
                     )
-                    torch.npu.graph_task_update_end(update_stream)
+                    torch.npu.graph_task_update_end(target_stream)
 
-                    event.record(update_stream)
+                    event.record(target_stream)
 
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         super().process_weights_after_loading(act_dtype)
