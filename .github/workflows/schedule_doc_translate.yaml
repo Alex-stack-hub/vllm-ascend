@@ -42,7 +42,7 @@ jobs:
       UPSTREAM_REPO: vllm-project/vllm-ascend
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6.0.1
+        uses: actions/checkout@v6
         with:
           repository: vllm-ascend-ci/vllm-ascend
           token: ${{ secrets.PAT_TOKEN }}
@@ -60,6 +60,11 @@ jobs:
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git checkout -B "${BRANCH_NAME}" "upstream/${TARGET_BRANCH}"
+
+          # Use latest translation script from upstream/main
+          git checkout upstream/main -- .github/workflows/scripts/po_translate.py
+          git checkout upstream/main -- docs/requirements-docs.txt
+          git restore --staged .github/workflows/scripts/po_translate.py docs/requirements-docs.txt
 
       - name: Setup Python
         uses: actions/setup-python@v5

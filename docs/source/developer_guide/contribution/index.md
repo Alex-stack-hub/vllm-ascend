@@ -34,11 +34,10 @@ bash format.sh
 
 #### Run CI locally
 
-After completing "Run lint" setup, you can run CI locally:
+After completing "Run lint" setup, you can run CI (Continuous integration) locally:
 
 ```{code-block} bash
    :substitutions:
-
 cd ~/vllm-project/
 
 # Run CI needs vLLM installed
@@ -75,7 +74,7 @@ You can refer to [Testing](./testing.md)  to set up a testing environment and ru
 
 ## DCO and Signed-off-by
 
-When contributing changes to this project, you must agree to the DCO. Commits must include a `Signed-off-by:` header which certifies agreement with the terms of the DCO.
+When contributing changes to this project, you must agree to the DCO. Commits must include a `Signed-off-by:` header which certifies agreement with the terms of the DCO (Developer Certificate of Origin).
 
 Using `-s` with `git commit` will automatically add this header.
 
@@ -90,7 +89,7 @@ Only specific types of PRs will be reviewed. The PR title is prefixed appropriat
 - `[Worker]` for new features or optimization in worker.
 - `[Core]` for new features or optimization  in the core vllm-ascend logic (such as platform, attention, communicators, model runner)
 - `[Kernel]` for changes affecting compute kernels and ops.
-- `[Bugfix]` for bug fixes.
+- `[BugFix]` for bug fixes.
 - `[Doc]` for documentation fixes and improvements.
 - `[Test]` for tests (such as unit tests).
 - `[CI]` for build or continuous integration improvements.
