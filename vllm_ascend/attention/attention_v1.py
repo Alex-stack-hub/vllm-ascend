@@ -593,6 +593,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
 
                     event.record(update_stream)
 
+
+
     def process_weights_after_loading(self, act_dtype: torch.dtype):
         super().process_weights_after_loading(act_dtype)
         if flashcomm2_oshard_manager.flashcomm2_oshard_enable():
