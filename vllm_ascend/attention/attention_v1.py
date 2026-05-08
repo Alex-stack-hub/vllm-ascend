@@ -502,6 +502,8 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     param = param_info['params']
                     handle = param_info['handle']
                     event = param_info['event']
+                    sliding_window = param_info.get('sliding_window', None)
+                    captured_layout = param_info.get('input_layout', "TND")
 
                     (
                         query,
@@ -538,7 +540,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         block_tables = attn_metadata[key].block_tables
 
                     torch.npu.graph_task_update_begin(update_stream, handle)
-                    input_layout = "TND"
+                    input_layout = captured_layout
                     extra_args = {}
                     if c8_k_aq_scale is not None:
                         extra_args = {
@@ -557,6 +559,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     elif query.dim() == 4:
                         input_layout = "BNSD"
                         sparse_mode = 0
+                    # Sliding window decode: use sparse_mode=4 + pre_tokens
+                    # to match what was captured in full_graph_fia
+                    if sliding_window is not None and input_layout != "BNSD":
+                        sparse_mode = 4
+                    # BNSD expects per-sequence lengths, not cumulative
+                    if input_layout == "BNSD" and isinstance(actual_seq_lengths_q, list) and len(actual_seq_lengths_q) > 0:
+                        cum = actual_seq_lengths_q
+                        actual_seq_lengths_q = [cum[0]] + [cum[i] - cum[i - 1] for i in range(1, len(cum))]
+                    fia_kwargs = dict(extra_args)
+                    if sliding_window is not None:
+                        fia_kwargs['pre_tokens'] = sliding_window
                     torch_npu.npu_fused_infer_attention_score.out(
                         query=query,
                         key=key_cache,
@@ -571,7 +584,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                         num_heads=num_heads,
                         scale=scale,
                         sparse_mode=sparse_mode,
-                        **extra_args,
+                        **fia_kwargs,
                         workspace=graph_params.workspaces.get(num_tokens),
                         out=[attn_output, softmax_lse],
                     )
@@ -645,6 +658,24 @@ class AscendAttentionBackendImpl(AttentionImpl):
             if attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
                 attn_mask = None
                 sparse_mode = 0
+            # BNSD expects per-sequence lengths, not cumulative
+            actual_seq_lengths_q = self._cum_lens_to_lens(actual_seq_lengths_q)
+        # Sliding window decode: use sparse_mode=4 + pre_tokens to constrain
+        # attention to the last `sliding_window` tokens per sequence. During
+        # graph capture this is critical because the eager path
+        # (_forward_fia_slidingwindow) uses BSH+pre_tokens, but the capture
+        # path (full_graph_fia) uses TND and would otherwise compute full
+        # attention for sliding window layers, causing garbled output once
+        # context exceeds the window size.
+        is_sliding_window_decode = (
+            self.sliding_window is not None
+            and attn_metadata.attn_state == AscendAttentionState.DecodeOnly
+            and self.sinks is None
+            and not use_bnsd_for_d512
+        )
+        if is_sliding_window_decode:
+            sparse_mode = 4
+        pre_tokens = self.sliding_window if is_sliding_window_decode else None
         if self.enable_c8_quant:
             extra_args = {
                 "key_antiquant_scale": layer._c8_k_aq_scale,
@@ -660,6 +691,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             output = output.unsqueeze(2)
             attn_mask = None
             sparse_mode = 0
+            pre_tokens = None
         if workspace is None:
             workspace = torch_npu._npu_fused_infer_attention_score_get_max_workspace(
                 query=query,
@@ -726,8 +758,13 @@ class AscendAttentionBackendImpl(AttentionImpl):
             'params': attn_params,
             'handle': None,  # Will be set after graph_task_group_end
             'event': event,  # Already created above
+            'sliding_window': pre_tokens,
+            'input_layout': input_layout,
         }
 
+        fia_kwargs = dict(extra_args)
+        if pre_tokens is not None:
+            fia_kwargs['pre_tokens'] = pre_tokens
         torch.npu.graph_task_group_begin(stream)
         torch_npu.npu_fused_infer_attention_score.out(
             query=query,
@@ -745,7 +782,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
             sparse_mode=sparse_mode,
             workspace=workspace,
             out=[output, softmax_lse],
-            **extra_args,
+            **fia_kwargs,
         )
 
         # Restore output shape for BNSD layout
