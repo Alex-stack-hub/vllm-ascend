@@ -583,7 +583,7 @@ class AscendFusedMoE(FusedMoE):
     ) -> torch.Tensor | FusedMoEResult:
         assert self.quant_method is not None
 
-        if not AscendFusedMoE._gemma4_moe_logged and self.activation == "gelu":
+        if not AscendFusedMoE._gemma4_moe_logged and getattr(self.activation, 'value', self.activation) == "gelu":
             AscendFusedMoE._gemma4_moe_logged = True
             import sys
             print(

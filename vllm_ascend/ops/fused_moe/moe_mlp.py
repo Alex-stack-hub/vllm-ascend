@@ -142,14 +142,15 @@ def quant_apply_mlp(
     # ===== GELU activation path =====
     # No fused SwiGLU+quant NPU operator exists for GELU, so use
     # separate GMM → dequant → chunk → GELU → mul → quant → GMM2.
-    if activation == "gelu":
+    act_name = getattr(activation, "value", activation)
+    if act_name == "gelu":
         import sys
         branch = (
             "w4a16" if w1_offset is not None
             else ("w4a8" if w1_scale_bias is not None else "w8a8")
         )
         print(
-            f"[GEMMA4_MOE_DIAG] quant_apply_mlp: activation={activation} "
+            f"[GEMMA4_MOE_DIAG] quant_apply_mlp: activation={act_name} "
             f"branch={branch} "
             f"hidden_dtype={hidden_states.dtype} "
             f"w1_offset_is_none={w1_offset is None} "
@@ -552,7 +553,8 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
     fusion = mlp_compute_input.fusion
     swiglu_limit = mlp_compute_input.swiglu_limit
 
-    if activation == "gelu":
+    act_name = getattr(activation, "value", activation)
+    if act_name == "gelu":
         import sys
         w1_dtype = w1[0].dtype if isinstance(w1, list) else w1.dtype
         w2_dtype = w2[0].dtype if isinstance(w2, list) else w2.dtype

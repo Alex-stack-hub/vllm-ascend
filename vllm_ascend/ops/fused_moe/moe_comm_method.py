@@ -152,7 +152,7 @@ class MoECommMethod(ABC):
             use_fusion_ops=self.use_fusion_ops,
         )
 
-        if fused_experts_input.activation == "gelu":
+        if getattr(fused_experts_input.activation, 'value', fused_experts_input.activation) == "gelu":
             import sys
             print(
                 f"[GEMMA4_MOE_DIAG] fused_experts: "
