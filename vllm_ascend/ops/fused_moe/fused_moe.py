@@ -576,10 +576,28 @@ class AscendFusedMoE(FusedMoE):
             router_logits,
         )
 
+    _gemma4_moe_logged = False
+
     def forward_impl(  # type: ignore[override]
         self, hidden_states: torch.Tensor, router_logits: torch.Tensor, return_with_event: bool = False
     ) -> torch.Tensor | FusedMoEResult:
         assert self.quant_method is not None
+
+        if not AscendFusedMoE._gemma4_moe_logged and self.activation == "gelu":
+            AscendFusedMoE._gemma4_moe_logged = True
+            logger.info(
+                "[GEMMA4_MOE_DIAG] forward_impl: activation=%s quant_type=%s "
+                "moe_comm_type=%s enable_sp=%s hidden_dtype=%s router_dtype=%s "
+                "num_experts=%s top_k=%s",
+                self.activation,
+                self.quant_type,
+                _EXTRA_CTX.moe_comm_type,
+                enable_sp(),
+                hidden_states.dtype,
+                router_logits.dtype,
+                self.moe_config.num_experts,
+                self.top_k,
+            )
 
         forward_context = get_forward_context()
         # When static kernels are enabled, the forward pass runs twice (compilation + capture),

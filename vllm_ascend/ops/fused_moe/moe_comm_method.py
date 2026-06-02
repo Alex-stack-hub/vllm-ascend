@@ -152,6 +152,22 @@ class MoECommMethod(ABC):
             use_fusion_ops=self.use_fusion_ops,
         )
 
+        if fused_experts_input.activation == "gelu":
+            from vllm.logger import logger
+            logger.info_once(
+                "[GEMMA4_MOE_DIAG] fused_experts: "
+                "after_dispatch_hidden_dtype=%s dynamic_scale_is_none=%s "
+                "group_list_type=%s quant_type=%s activation=%s "
+                "use_fusion_ops=%s fusion=%s",
+                token_dispatch_output.hidden_states.dtype,
+                token_dispatch_output.dynamic_scale is None,
+                token_dispatch_output.group_list_type,
+                fused_experts_input.quant.quant_type,
+                fused_experts_input.activation,
+                self.use_fusion_ops,
+                mlp_compute_input.fusion,
+            )
+
         mlp_output, before_gmm2_evt = self._apply_mlp(mlp_compute_input)
 
         before_combine_evt = torch.npu.current_stream().record_event()
