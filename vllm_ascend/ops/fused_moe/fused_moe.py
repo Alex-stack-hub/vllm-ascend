@@ -585,18 +585,18 @@ class AscendFusedMoE(FusedMoE):
 
         if not AscendFusedMoE._gemma4_moe_logged and self.activation == "gelu":
             AscendFusedMoE._gemma4_moe_logged = True
-            logger.info(
-                "[GEMMA4_MOE_DIAG] forward_impl: activation=%s quant_type=%s "
-                "moe_comm_type=%s enable_sp=%s hidden_dtype=%s router_dtype=%s "
-                "num_experts=%s top_k=%s",
-                self.activation,
-                self.quant_type,
-                _EXTRA_CTX.moe_comm_type,
-                enable_sp(),
-                hidden_states.dtype,
-                router_logits.dtype,
-                self.moe_config.num_experts,
-                self.top_k,
+            import sys
+            print(
+                f"[GEMMA4_MOE_DIAG] forward_impl: activation={self.activation} "
+                f"quant_type={self.quant_type} "
+                f"moe_comm_type={_EXTRA_CTX.moe_comm_type} "
+                f"enable_sp={enable_sp()} "
+                f"hidden_dtype={hidden_states.dtype} "
+                f"router_dtype={router_logits.dtype} "
+                f"num_experts={self.moe_config.num_experts} "
+                f"top_k={self.top_k}",
+                file=sys.stderr,
+                flush=True,
             )
 
         forward_context = get_forward_context()
