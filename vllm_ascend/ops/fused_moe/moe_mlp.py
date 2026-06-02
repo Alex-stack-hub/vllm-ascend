@@ -223,43 +223,29 @@ def quant_apply_mlp(
 
         before_gmm2_evt = torch.npu.current_stream().record_event()
 
-        if w1_scale_bias is not None:
-            # W4A8: requantize before GMM2 (per-channel weight bias
-            # requires int8 input for correct dequant).
-            hidden_states, swiglu_out_scale = torch_npu.npu_dynamic_quant(hidden_states)
-            hidden_states = DeviceOperator.npu_grouped_matmul_gmm2(
-                hidden_states=hidden_states,
-                weight=w2,
-                weight_scale=w2_scale,
-                per_token_scale=swiglu_out_scale,
-                group_list=group_list,
-                group_list_type=group_list_type,
-                input_dtype=input_hidden_dtype,
-                act_quant_type=act_quant_type,
-                weight_quant_type=weight_quant_type,
-                scale_type=scale_type,
-                per_token_scale_type=per_token_scale_type,
-                use_bf16=use_bf16,
-                use_mxfp_quant=False,
-                bias=bias2,
-                fallback_output_dtype=w2_scale[0].dtype if isinstance(w2_scale, list) else w2_scale.dtype,
-            )
-        else:
-            # W8A8: skip intermediate dynamic_quant — pass float
-            # activation directly to the second GMM to avoid
-            # quantization error between GELU and down projection.
-            w2_scale_gmm = w2_scale if isinstance(w2_scale, list) else [w2_scale]
-            hidden_states = torch_npu.npu_grouped_matmul(
-                x=[hidden_states],
-                weight=w2,
-                scale=w2_scale_gmm,
-                bias=bias2,
-                split_item=2,
-                group_list_type=group_list_type,
-                group_type=0,
-                group_list=group_list,
-                output_dtype=_output_dtype,
-            )[0]
+        # W8A8 / W4A8: requantize before GMM2.
+        # npu_grouped_matmul with int8 weight requires both scale
+        # (per-channel weight scale) and per_token_scale (per-token
+        # activation scale); the operator rejects float input when
+        # scale is provided.
+        hidden_states, swiglu_out_scale = torch_npu.npu_dynamic_quant(hidden_states)
+        hidden_states = DeviceOperator.npu_grouped_matmul_gmm2(
+            hidden_states=hidden_states,
+            weight=w2,
+            weight_scale=w2_scale,
+            per_token_scale=swiglu_out_scale,
+            group_list=group_list,
+            group_list_type=group_list_type,
+            input_dtype=input_hidden_dtype,
+            act_quant_type=act_quant_type,
+            weight_quant_type=weight_quant_type,
+            scale_type=scale_type,
+            per_token_scale_type=per_token_scale_type,
+            use_bf16=use_bf16,
+            use_mxfp_quant=False,
+            bias=bias2,
+            fallback_output_dtype=w2_scale[0].dtype if isinstance(w2_scale, list) else w2_scale.dtype,
+        )
         return hidden_states, before_gmm2_evt
 
     weight_prefetch_method = get_weight_prefetch_method()
