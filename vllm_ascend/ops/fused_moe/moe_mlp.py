@@ -149,19 +149,19 @@ def quant_apply_mlp(
             "w4a16" if w1_offset is not None
             else ("w4a8" if w1_scale_bias is not None else "w8a8")
         )
-        print(
-            f"[GEMMA4_MOE_DIAG] quant_apply_mlp: activation={act_name} "
-            f"branch={branch} "
-            f"hidden_dtype={hidden_states.dtype} "
-            f"w1_offset_is_none={w1_offset is None} "
-            f"w1_scale_bias_is_none={w1_scale_bias is None} "
-            f"dynamic_scale_is_none={dynamic_scale is None} "
-            f"group_list_type={group_list_type} "
-            f"pertoken_scale_dtype={pertoken_scale.dtype if pertoken_scale is not None else None} "
-            f"_output_dtype={_output_dtype}",
-            file=sys.stderr,
-            flush=True,
-        )
+        # print(
+        #     f"[GEMMA4_MOE_DIAG] quant_apply_mlp: activation={act_name} "
+        #     f"branch={branch} "
+        #     f"hidden_dtype={hidden_states.dtype} "
+        #     f"w1_offset_is_none={w1_offset is None} "
+        #     f"w1_scale_bias_is_none={w1_scale_bias is None} "
+        #     f"dynamic_scale_is_none={dynamic_scale is None} "
+        #     f"group_list_type={group_list_type} "
+        #     f"pertoken_scale_dtype={pertoken_scale.dtype if pertoken_scale is not None else None} "
+        #     f"_output_dtype={_output_dtype}",
+        #     file=sys.stderr,
+        #     flush=True,
+        # )
         if w1_offset is not None:
             # W4A16: float input, antiquant GMM for both projections
             hidden_states = torch_npu.npu_grouped_matmul(
@@ -201,8 +201,13 @@ def quant_apply_mlp(
             bias1 = w1_scale_bias
             bias2 = w2_scale_bias
             _output_dtype = torch.bfloat16
+        if pertoken_scale is not None and pertoken_scale.dtype != torch.float32:
+            pertoken_scale = pertoken_scale.to(torch.bfloat32)
 
         w1_scale_gmm = w1_scale if isinstance(w1_scale, list) else [w1_scale]
+        if w1_scale_gmm[0].dtype != _output_dtype:
+            w1_scale_gmm = [s.to(_output_dtype) for s in w1_scale_gmm]
+
         hidden_states = torch_npu.npu_grouped_matmul(
             x=[hidden_states],
             weight=w1,
@@ -484,15 +489,15 @@ def unquant_apply_mlp(
         gate_up_out = AscendSwigluOAIAndMul.swiglu_oai_forward(gate_up_out.view(-1, hidden_size))
     elif act_name == "gelu":
         import sys
-        print(
-            f"[GEMMA4_MOE_DIAG] unquant_apply_mlp: activation=gelu "
-            f"hidden_dtype={hidden_states.dtype} "
-            f"gate_up_out_dtype={gate_up_out.dtype} "
-            f"w1_shape={tuple(w1.shape)} w2_shape={tuple(w2.shape)} "
-            f"group_list_type={group_list_type}",
-            file=sys.stderr,
-            flush=True,
-        )
+        # print(
+        #     f"[GEMMA4_MOE_DIAG] unquant_apply_mlp: activation=gelu "
+        #     f"hidden_dtype={hidden_states.dtype} "
+        #     f"gate_up_out_dtype={gate_up_out.dtype} "
+        #     f"w1_shape={tuple(w1.shape)} w2_shape={tuple(w2.shape)} "
+        #     f"group_list_type={group_list_type}",
+        #     file=sys.stderr,
+        #     flush=True,
+        # )
         gate, up = gate_up_out.chunk(2, dim=-1)
         gate_up_out = torch.nn.functional.gelu(gate, approximate="tanh") * up
     else:
@@ -552,19 +557,19 @@ def unified_apply_mlp(*, mlp_compute_input: MoEMlpComputeInput) -> torch.Tensor:
             w2_scale[0].dtype if isinstance(w2_scale, list) and w2_scale is not None
             else (w2_scale.dtype if w2_scale is not None and not isinstance(w2_scale, list) else None)
         )
-        print(
-            f"[GEMMA4_MOE_DIAG] unified_apply_mlp: activation={activation} "
-            f"is_quant={mlp_compute_input.quant.is_quant} "
-            f"hidden_dtype={hidden_states.dtype} "
-            f"dynamic_scale_is_none={dynamic_scale is None} "
-            f"w1_dtype={w1_dtype} w2_dtype={w2_dtype} "
-            f"w1_scale_dtype={w1_scale_dtype} w2_scale_dtype={w2_scale_dtype} "
-            f"w1_scale_bias_is_none={w1_scale_bias is None} "
-            f"w1_offset_is_none={w1_offset is None} "
-            f"group_list_type={group_list_type} fusion={fusion}",
-            file=sys.stderr,
-            flush=True,
-        )
+        # print(
+        #     f"[GEMMA4_MOE_DIAG] unified_apply_mlp: activation={activation} "
+        #     f"is_quant={mlp_compute_input.quant.is_quant} "
+        #     f"hidden_dtype={hidden_states.dtype} "
+        #     f"dynamic_scale_is_none={dynamic_scale is None} "
+        #     f"w1_dtype={w1_dtype} w2_dtype={w2_dtype} "
+        #     f"w1_scale_dtype={w1_scale_dtype} w2_scale_dtype={w2_scale_dtype} "
+        #     f"w1_scale_bias_is_none={w1_scale_bias is None} "
+        #     f"w1_offset_is_none={w1_offset is None} "
+        #     f"group_list_type={group_list_type} fusion={fusion}",
+        #     file=sys.stderr,
+        #     flush=True,
+        # )
 
     if not mlp_compute_input.quant.is_quant:
         return unquant_apply_mlp(
