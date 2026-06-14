@@ -973,7 +973,7 @@ def speculative_enable_dispatch_gmm_combine_decode(vllm_config: VllmConfig) -> b
 def _is_contain_expert(config: Any):
     if isinstance(config, dict):
         for k, v in config.items():
-            if "expert" in str(k):
+            if "expert" in str(k) and v:
                 return True
             if _is_contain_expert(v):
                 return True

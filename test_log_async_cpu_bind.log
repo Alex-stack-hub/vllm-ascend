@@ -1,0 +1,218 @@
+INFO 06-11 06:37:34 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-11 06:37:34 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-11 06:37:34 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-11 06:37:34 [__init__.py:238] Platform plugin ascend is activated
+2026-06-11 06:37:42,188 - 127667 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2+empty: default 1
+INFO 06-11 06:37:43 [nixl_utils.py:20] Setting UCX_RCACHE_MAX_UNRELEASED to '1024' to avoid a rare memory leak in UCX when using NIXL.
+WARNING 06-11 06:37:43 [nixl_utils.py:34] NIXL is not available
+WARNING 06-11 06:37:43 [nixl_utils.py:44] NIXL agent config is not available
+WARNING 06-11 06:37:43 [registry.py:949] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM.
+WARNING 06-11 06:37:43 [registry.py:949] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP.
+INFO 06-11 06:37:43 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+INFO 06-11 06:37:43 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299] 
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299]        █     █     █▄   ▄█
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299]  ▄▄ ▄█ █     █     █ ▀▄▀ █  version 0.20.2
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299]   █▄█▀ █     █     █     █  model   /home/xty/gemma4/26B
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299]    ▀▀  ▀▀▀▀▀ ▀▀▀▀▀ ▀     ▀
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:299] 
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:233] non-default args: {'model_tag': '/home/xty/gemma4/26B', 'enable_auto_tool_choice': True, 'tool_call_parser': 'gemma4', 'port': 18003, 'model': '/home/xty/gemma4/26B', 'served_model_name': ['gemma-4-26B-A4B-it'], 'reasoning_parser': 'gemma4', 'tensor_parallel_size': 2, 'enable_expert_parallel': True, 'enable_prefix_caching': True, 'limit_mm_per_prompt': {'image': 2, 'audio': 1, 'video': 1}, 'async_scheduling': True, 'compilation_config': {'mode': None, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': [], 'ir_enable_torch_wrap': None, 'splitting_ops': None, 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': None, 'compile_ranges_endpoints': None, 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': None, 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': None, 'pass_config': {}, 'max_cudagraph_capture_size': None, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': None, 'static_all_moe_layers': []}}
+(APIServer pid=127667) INFO 06-11 06:37:43 [model.py:555] Resolved architecture: Gemma4ForConditionalGeneration
+(APIServer pid=127667) INFO 06-11 06:37:43 [model.py:1680] Using max model len 262144
+(APIServer pid=127667) INFO 06-11 06:37:43 [config.py:101] Gemma4 model has heterogeneous head dimensions (head_dim=256, global_head_dim=512). Forcing TRITON_ATTN backend to prevent mixed-backend numerical divergence.
+(APIServer pid=127667) INFO 06-11 06:37:43 [vllm.py:840] Asynchronous scheduling is enabled.
+(APIServer pid=127667) INFO 06-11 06:37:43 [kernel.py:205] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'])
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:847] Parameter '--disable-cascade-attn' is a GPU-specific feature. Resetting to False for Ascend.
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:936] Ignored parameter 'disable_flashinfer_prefill'. This is a GPU-specific feature not supported on Ascend. Resetting to False.
+(APIServer pid=127667) INFO 06-11 06:37:43 [platform.py:957] User specified attention backend 'AttentionBackendEnum.TRITON_ATTN'. Note that Ascend NPU will use its registered plugin backend instead. Resetting to None.
+(APIServer pid=127667) INFO 06-11 06:37:43 [ascend_config.py:684] Dynamic EPLB is False
+(APIServer pid=127667) INFO 06-11 06:37:43 [ascend_config.py:685] The number of redundant experts is 0
+(APIServer pid=127667) INFO 06-11 06:37:43 [platform.py:431] FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448] [91m
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             **********************************************************************************
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * WARNING: You have enabled the *full graph* feature.
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * This is an early experimental stage and may involve various unknown issues.
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * A known problem is that capturing too many batch sizes can lead to OOM
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * (Out of Memory) errors or inference hangs. If you encounter such issues,
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * consider reducing `gpu_memory_utilization` or manually specifying a smaller
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * batch size for graph capture.
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * For more details, please refer to:
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             * https://docs.vllm.ai/en/stable/configuration/conserving_memory.html#reduce-cuda-graphs
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             **********************************************************************************[0m
+(APIServer pid=127667) WARNING 06-11 06:37:43 [platform.py:448]             
+(APIServer pid=127667) INFO 06-11 06:37:43 [utils.py:1321] Block size is set to 128 if prefix cache or chunked prefill is enabled.
+(APIServer pid=127667) INFO 06-11 06:37:43 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(APIServer pid=127667) INFO 06-11 06:37:48 [compilation.py:303] Enabled custom fusions: norm_quant, act_quant
+INFO 06-11 06:38:05 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-11 06:38:05 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-11 06:38:05 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-11 06:38:05 [__init__.py:238] Platform plugin ascend is activated
+WARNING 06-11 06:38:14 [nixl_utils.py:34] NIXL is not available
+WARNING 06-11 06:38:14 [nixl_utils.py:44] NIXL agent config is not available
+(EngineCore pid=127926) 2026-06-11 06:38:15,092 - 127926 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2+empty: default 1
+(EngineCore pid=127926) WARNING 06-11 06:38:15 [registry.py:949] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM.
+(EngineCore pid=127926) WARNING 06-11 06:38:15 [registry.py:949] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP.
+(EngineCore pid=127926) INFO 06-11 06:38:15 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+(EngineCore pid=127926) INFO 06-11 06:38:15 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+(EngineCore pid=127926) INFO 06-11 06:38:15 [core.py:109] Initializing a V1 LLM engine (v0.20.2) with config: model='/home/xty/gemma4/26B', speculative_config=None, tokenizer='/home/xty/gemma4/26B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=262144, download_dir=None, load_format=auto, tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=True, quantization=None, quantization_config=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=npu, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='gemma4', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=gemma-4-26B-A4B-it, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_DECODE_ONLY: (2, 0)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 256, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native']), enable_flashinfer_autotune=True, moe_backend='auto')
+(EngineCore pid=127926) INFO 06-11 06:38:15 [multiproc_executor.py:139] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=192.168.9.179 (local), world_size=2, local_world_size=2
+INFO 06-11 06:38:24 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-11 06:38:24 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-11 06:38:24 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-11 06:38:24 [__init__.py:238] Platform plugin ascend is activated
+INFO 06-11 06:38:24 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-11 06:38:24 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-11 06:38:24 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-11 06:38:24 [__init__.py:238] Platform plugin ascend is activated
+2026-06-11 06:38:30,459 - 127955 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2+empty: default 1
+2026-06-11 06:38:30,968 - 127956 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2+empty: default 1
+WARNING 06-11 06:38:32 [nixl_utils.py:34] NIXL is not available
+WARNING 06-11 06:38:32 [nixl_utils.py:44] NIXL agent config is not available
+WARNING 06-11 06:38:32 [registry.py:949] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM.
+WARNING 06-11 06:38:32 [registry.py:949] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP.
+INFO 06-11 06:38:32 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+INFO 06-11 06:38:32 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+WARNING 06-11 06:38:33 [nixl_utils.py:34] NIXL is not available
+WARNING 06-11 06:38:33 [nixl_utils.py:44] NIXL agent config is not available
+WARNING 06-11 06:38:33 [registry.py:949] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM.
+WARNING 06-11 06:38:33 [registry.py:949] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP.
+INFO 06-11 06:38:33 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader`
+INFO 06-11 06:38:33 [__init__.py:110] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork`
+[transformers] `Qwen2VLImageProcessorFast` is deprecated. The `Fast` suffix for image processors has been removed; use `Qwen2VLImageProcessor` instead.
+[transformers] `Qwen2VLImageProcessorFast` is deprecated. The `Fast` suffix for image processors has been removed; use `Qwen2VLImageProcessor` instead.
+INFO 06-11 06:38:40 [ascend_config.py:684] Dynamic EPLB is False
+INFO 06-11 06:38:40 [ascend_config.py:685] The number of redundant experts is 0
+(Worker pid=127955) INFO 06-11 06:38:43 [parallel_state.py:1402] world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:47769 backend=hccl
+INFO 06-11 06:38:44 [ascend_config.py:684] Dynamic EPLB is False
+INFO 06-11 06:38:44 [ascend_config.py:685] The number of redundant experts is 0
+(Worker pid=127956) INFO 06-11 06:38:46 [parallel_state.py:1402] world_size=2 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:47769 backend=hccl
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+(Worker pid=127955) INFO 06-11 06:38:47 [parallel_state.py:1715] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:47 [model_runner_v1.py:3342] Starting to load model /home/xty/gemma4/26B...
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:38:47 [model_runner_v1.py:3342] Starting to load model /home/xty/gemma4/26B...
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [vllm.py:840] Asynchronous scheduling is enabled.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [kernel.py:205] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'])
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [platform.py:431] FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448] [91m
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             **********************************************************************************
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * WARNING: You have enabled the *full graph* feature.
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * This is an early experimental stage and may involve various unknown issues.
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * A known problem is that capturing too many batch sizes can lead to OOM
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * (Out of Memory) errors or inference hangs. If you encounter such issues,
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * consider reducing `gpu_memory_utilization` or manually specifying a smaller
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * batch size for graph capture.
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * For more details, please refer to:
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             * https://docs.vllm.ai/en/stable/configuration/conserving_memory.html#reduce-cuda-graphs
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             **********************************************************************************[0m
+(Worker_TP0_EP0 pid=127955) WARNING 06-11 06:38:48 [platform.py:448]             
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [compilation.py:303] Enabled custom fusions: norm_quant, act_quant
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [layer.py:408] [EP Rank 0/2] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 64/128. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:48 [fused_moe.py:417] [EP Rank 0/2] Expert parallelism is enabled. Local/global number of experts: 64/128. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63.
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:38:48 [kernel.py:205] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'])
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:38:48 [platform.py:431] FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448] [91m
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             **********************************************************************************
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * WARNING: You have enabled the *full graph* feature.
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * This is an early experimental stage and may involve various unknown issues.
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * A known problem is that capturing too many batch sizes can lead to OOM
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * (Out of Memory) errors or inference hangs. If you encounter such issues,
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * consider reducing `gpu_memory_utilization` or manually specifying a smaller
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * batch size for graph capture.
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * For more details, please refer to:
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             * https://docs.vllm.ai/en/stable/configuration/conserving_memory.html#reduce-cuda-graphs
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             **********************************************************************************[0m
+(Worker_TP1_EP1 pid=127956) WARNING 06-11 06:38:48 [platform.py:448]             
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:38:48 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:51 [compilation.py:1049] Using OOT custom backend for compilation.
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:38:51 [compilation.py:1049] Using OOT custom backend for compilation.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:51 [weight_utils.py:904] Filesystem type for checkpoints: EXT4. Checkpoint size: 48.07 GiB. Available RAM: 687.81 GiB.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:38:51 [weight_utils.py:927] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+(Worker_TP0_EP0 pid=127955) Loading safetensors checkpoint shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+(Worker_TP0_EP0 pid=127955) Loading safetensors checkpoint shards:  50% Completed | 1/2 [00:09<00:09,  9.26s/it]
+(Worker_TP0_EP0 pid=127955) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:10<00:00,  4.75s/it]
+(Worker_TP0_EP0 pid=127955) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:10<00:00,  5.43s/it]
+(Worker_TP0_EP0 pid=127955) 
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:02 [default_loader.py:384] Loading weights took 10.92 seconds
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:03 [model_runner_v1.py:3389] Loading model weights took 25.2170 GB
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:39:03 [model_runner_v1.py:3389] Loading model weights took 25.2170 GB
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:04 [gpu_model_runner.py:5822] Encoder cache will be initialized with a budget of 2496 tokens, and profiled with 1 video items of the maximum feature size.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:54 [backends.py:1069] Using cache directory: /root/.cache/vllm/torch_compile_cache/2ff679fea5/rank_0_0/backbone for vLLM's torch.compile
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:54 [backends.py:1128] Dynamo bytecode transform time: 4.68 s
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:39:56 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization.
+(Worker_TP1_EP1 pid=127956) /usr/local/python3.11.15/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:105: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(Worker_TP1_EP1 pid=127956)   warnings.warn(
+(Worker_TP1_EP1 pid=127956) /usr/local/python3.11.15/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:112: DeprecationWarning: The "reduce-overhead" mode configuration will be deprecated. Please use the "npugraph_ex" backend.
+(Worker_TP1_EP1 pid=127956)   warnings.warn("The \"reduce-overhead\" mode configuration will be deprecated. "
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:39:56 [compiler_interface.py:162] enable_npugraph_ex is enabled, which will bring graph compilation optimization.
+(Worker_TP0_EP0 pid=127955) /usr/local/python3.11.15/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:105: UserWarning: The following torchair config or properties may not take effect or report error in reduce-overhead mode: config.experimental_config.enable_view_optimize:True, set_dim_gears, dynamo_export, scope, npu_print
+(Worker_TP0_EP0 pid=127955)   warnings.warn(
+(Worker_TP0_EP0 pid=127955) /usr/local/python3.11.15/lib/python3.11/site-packages/torch_npu/dynamo/torchair/configs/compiler_config.py:112: DeprecationWarning: The "reduce-overhead" mode configuration will be deprecated. Please use the "npugraph_ex" backend.
+(Worker_TP0_EP0 pid=127955)   warnings.warn("The \"reduce-overhead\" mode configuration will be deprecated. "
+(EngineCore pid=127926) INFO 06-11 06:40:05 [shm_broadcast.py:681] No available shared memory broadcast block found in 60 seconds. This typically happens when some processes are hanging or doing some time-consuming work (e.g. compilation, weight/kv cache quantization).
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:40:28 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/6e498bf570e04d6a5eb8d86a97613fab770c06b9386faa35aa0878487875685b/rank_1_0/model
+(Worker_TP1_EP1 pid=127956) [GEMMA4_MOE_DIAG] forward_impl: activation=MoEActivation.GELU quant_type=QuantType.NONE moe_comm_type=MoECommType.ALLGATHER enable_sp=False hidden_dtype=torch.bfloat16 router_dtype=torch.float32 num_experts=128 top_k=8
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:40:32 [backends.py:391] Compiling a graph for compile range (1, 2048) takes 36.50 s
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:40:32 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/6e498bf570e04d6a5eb8d86a97613fab770c06b9386faa35aa0878487875685b/rank_0_0/model
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:40:32 [monitor.py:53] torch.compile took 42.49 s in total
+(Worker_TP0_EP0 pid=127955) [GEMMA4_MOE_DIAG] forward_impl: activation=MoEActivation.GELU quant_type=QuantType.NONE moe_comm_type=MoECommType.ALLGATHER enable_sp=False hidden_dtype=torch.bfloat16 router_dtype=torch.float32 num_experts=128 top_k=8
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:40:33 [monitor.py:81] Initial profiling/warmup run took 0.57 s
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:40:34 [worker.py:394] Available KV cache memory: 29.90 GiB
+(EngineCore pid=127926) INFO 06-11 06:40:34 [kv_cache_utils.py:1708] GPU KV cache size: 2,794,377 tokens
+(EngineCore pid=127926) INFO 06-11 06:40:34 [kv_cache_utils.py:1709] Maximum concurrency for 262,144 tokens per request: 10.66x
+(Worker_TP0_EP0 pid=127955) Capturing CUDA graphs (decode, FULL):   0%|          | 0/35 [00:00<?, ?it/s][rank0]:[W611 06:40:37.227231310 NPUGraph.cpp:223] Warning: Waiting for pending NCCL work to finish before starting graph capture. (function operator())
+[rank1]:[W611 06:40:37.227796900 NPUGraph.cpp:223] Warning: Waiting for pending NCCL work to finish before starting graph capture. (function operator())
+Capturing CUDA graphs (decode, FULL):   3%|▎         | 1/35 [00:01<00:46,  1.37s/it]Capturing CUDA graphs (decode, FULL):   6%|▌         | 2/35 [00:02<00:37,  1.14s/it]Capturing CUDA graphs (decode, FULL):   9%|▊         | 3/35 [00:03<00:34,  1.08s/it]Capturing CUDA graphs (decode, FULL):  11%|█▏        | 4/35 [00:04<00:32,  1.04s/it]Capturing CUDA graphs (decode, FULL):  14%|█▍        | 5/35 [00:05<00:30,  1.03s/it]Capturing CUDA graphs (decode, FULL):  17%|█▋        | 6/35 [00:06<00:29,  1.02s/it]Capturing CUDA graphs (decode, FULL):  20%|██        | 7/35 [00:07<00:28,  1.01s/it]Capturing CUDA graphs (decode, FULL):  23%|██▎       | 8/35 [00:08<00:27,  1.01s/it]Capturing CUDA graphs (decode, FULL):  26%|██▌       | 9/35 [00:09<00:26,  1.01s/it]Capturing CUDA graphs (decode, FULL):  29%|██▊       | 10/35 [00:10<00:25,  1.00s/it]Capturing CUDA graphs (decode, FULL):  31%|███▏      | 11/35 [00:11<00:24,  1.00s/it]Capturing CUDA graphs (decode, FULL):  34%|███▍      | 12/35 [00:12<00:23,  1.00s/it]Capturing CUDA graphs (decode, FULL):  37%|███▋      | 13/35 [00:13<00:22,  1.00s/it]Capturing CUDA graphs (decode, FULL):  40%|████      | 14/35 [00:14<00:20,  1.00it/s]Capturing CUDA graphs (decode, FULL):  43%|████▎     | 15/35 [00:15<00:19,  1.00it/s]Capturing CUDA graphs (decode, FULL):  46%|████▌     | 16/35 [00:16<00:19,  1.00s/it]Capturing CUDA graphs (decode, FULL):  49%|████▊     | 17/35 [00:17<00:18,  1.00s/it]Capturing CUDA graphs (decode, FULL):  51%|█████▏    | 18/35 [00:18<00:17,  1.00s/it]Capturing CUDA graphs (decode, FULL):  54%|█████▍    | 19/35 [00:19<00:16,  1.00s/it]Capturing CUDA graphs (decode, FULL):  57%|█████▋    | 20/35 [00:20<00:15,  1.01s/it]Capturing CUDA graphs (decode, FULL):  60%|██████    | 21/35 [00:21<00:14,  1.00s/it]Capturing CUDA graphs (decode, FULL):  63%|██████▎   | 22/35 [00:22<00:13,  1.00s/it]Capturing CUDA graphs (decode, FULL):  66%|██████▌   | 23/35 [00:23<00:12,  1.00s/it]Capturing CUDA graphs (decode, FULL):  69%|██████▊   | 24/35 [00:24<00:10,  1.00it/s]Capturing CUDA graphs (decode, FULL):  71%|███████▏  | 25/35 [00:25<00:10,  1.00s/it]Capturing CUDA graphs (decode, FULL):  74%|███████▍  | 26/35 [00:26<00:09,  1.00s/it]Capturing CUDA graphs (decode, FULL):  77%|███████▋  | 27/35 [00:27<00:08,  1.00s/it]Capturing CUDA graphs (decode, FULL):  80%|████████  | 28/35 [00:28<00:07,  1.00s/it]Capturing CUDA graphs (decode, FULL):  83%|████████▎ | 29/35 [00:29<00:05,  1.00it/s]Capturing CUDA graphs (decode, FULL):  86%|████████▌ | 30/35 [00:30<00:05,  1.00s/it]Capturing CUDA graphs (decode, FULL):  89%|████████▊ | 31/35 [00:31<00:04,  1.00s/it]Capturing CUDA graphs (decode, FULL):  91%|█████████▏| 32/35 [00:32<00:03,  1.00s/it]Capturing CUDA graphs (decode, FULL):  94%|█████████▍| 33/35 [00:33<00:01,  1.00it/s]Capturing CUDA graphs (decode, FULL):  97%|█████████▋| 34/35 [00:34<00:01,  1.00s/it]Capturing CUDA graphs (decode, FULL): 100%|██████████| 35/35 [00:35<00:00,  1.00it/s]Capturing CUDA graphs (decode, FULL): 100%|██████████| 35/35 [00:35<00:00,  1.01s/it]
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:12 [gpu_model_runner.py:6135] Graph capturing finished in 37 secs, took 0.83 GiB
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:12 [worker.py:546] Free memory on device (60.61/60.96 GiB) on startup. Desired GPU memory utilization is (0.92, 56.08 GiB). Actual usage: 25.22 GiB for weights, 0.36 GiB for peak activation, 0.59 GiB for non-torch memory, 0.83 GiB for NPU graph memory. Replace gpu_memory_utilization with `--kv-cache-memory=31056211558` (28.92 GiB) to fit into requested memory, or `--kv-cache-memory=35924887552` (33.46 GiB) to fully utilize NPU free memory. Current KV cache memory: 29.9 GiB.
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:12 [worker.py:546] Free memory on device (60.62/60.96 GiB) on startup. Desired GPU memory utilization is (0.92, 56.08 GiB). Actual usage: 25.22 GiB for weights, 0.36 GiB for peak activation, 0.59 GiB for non-torch memory, 0.84 GiB for NPU graph memory. Replace gpu_memory_utilization with `--kv-cache-memory=31048781414` (28.92 GiB) to fit into requested memory, or `--kv-cache-memory=35917948928` (33.45 GiB) to fully utilize NPU free memory. Current KV cache memory: 29.9 GiB.
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:15 [cpu_binding.py:328] [cpu_bind_mode] mode=topo_affinity rank=0 visible_npus=[0, 1]
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:15 [cpu_binding.py:388] The CPU allocation plan is as follows:
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:15 [cpu_binding.py:393] NPU0: main=[146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165]  acl=[166]  release=[[167]]
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:15 [cpu_binding.py:328] [cpu_bind_mode] mode=topo_affinity rank=1 visible_npus=[0, 1]
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:15 [cpu_binding.py:388] The CPU allocation plan is as follows:
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:15 [cpu_binding.py:393] NPU1: main=[170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189]  acl=[190]  release=[[191]]
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:15 [cpu_binding.py:415] [migrate] NPU:0 -> NUMA [6]
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:15 [cpu_binding.py:415] [migrate] NPU:1 -> NUMA [7]
+(Worker_TP0_EP0 pid=127955) INFO 06-11 06:41:23 [cpu_binding.py:510] NPU0(PCI 0000:c1:00.0): sq_send_trigger_irq IRQ_ID=2753 -> CPU144, cq_update_irq IRQ_ID=2754 -> CPU145
+(Worker_TP1_EP1 pid=127956) INFO 06-11 06:41:27 [cpu_binding.py:510] NPU1(PCI 0000:c2:00.0): sq_send_trigger_irq IRQ_ID=3009 -> CPU168, cq_update_irq IRQ_ID=3010 -> CPU169
+(EngineCore pid=127926) INFO 06-11 06:41:27 [core.py:299] init engine (profile, create kv cache, warmup model) took 143.93 s (compilation: 42.49 s)
+(EngineCore pid=127926) INFO 06-11 06:41:33 [vllm.py:840] Asynchronous scheduling is enabled.
+(EngineCore pid=127926) INFO 06-11 06:41:33 [kernel.py:205] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native'])
+(EngineCore pid=127926) INFO 06-11 06:41:33 [ascend_config.py:684] Dynamic EPLB is False
+(EngineCore pid=127926) INFO 06-11 06:41:33 [ascend_config.py:685] The number of redundant experts is 0
+(EngineCore pid=127926) INFO 06-11 06:41:33 [platform.py:431] FULL_DECODE_ONLY compilation enabled on NPU. use_inductor not supported - using only ACL Graph mode
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448] [91m
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             **********************************************************************************
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * WARNING: You have enabled the *full graph* feature.
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * This is an early experimental stage and may involve various unknown issues.
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * A known problem is that capturing too many batch sizes can lead to OOM
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * (Out of Memory) errors or inference hangs. If you encounter such issues,
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * consider reducing `gpu_memory_utilization` or manually specifying a smaller
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * batch size for graph capture.
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * For more details, please refer to:
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             * https://docs.vllm.ai/en/stable/configuration/conserving_memory.html#reduce-cuda-graphs
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             **********************************************************************************[0m
+(EngineCore pid=127926) WARNING 06-11 06:41:33 [platform.py:448]             
+(EngineCore pid=127926) INFO 06-11 06:41:33 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+(EngineCore pid=127926) INFO 06-11 06:41:33 [compilation.py:303] Enabled custom fusions: norm_quant, act_quant
+(APIServer pid=127667) INFO 06-11 06:41:33 [api_server.py:598] Supported tasks: ['generate']
+(APIServer pid=127667) INFO 06-11 06:41:33 [parser_manager.py:202] "auto" tool choice has been enabled.
+(APIServer pid=127667) WARNING 06-11 06:41:33 [model.py:1437] Default vLLM sampling parameters have been overridden by the model's `generation_config.json`: `{'temperature': 1.0, 'top_k': 64, 'top_p': 0.95}`. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`.
+(APIServer pid=127667) INFO 06-11 06:41:39 [hf.py:314] Detected the chat template content format to be 'openai'. You can set `--chat-template-content-format` to override this.
+(APIServer pid=127667) WARNING 06-11 06:42:03 [base.py:265] Multi-modal warmup failed
