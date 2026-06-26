@@ -1,0 +1,197 @@
+INFO 06-25 14:22:29 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-25 14:22:29 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-25 14:22:29 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-25 14:22:29 [__init__.py:238] Platform plugin ascend is activated
+/usr/local/python3.11.15/lib/python3.11/site-packages/transformers/loss/loss_for_object_detection.py:27: UserWarning: A NumPy version >=1.22.4 and <2.3.0 is required for this version of SciPy (detected version 2.3.5)
+  from scipy.optimize import linear_sum_assignment
+2026-06-25 14:22:38,667 - 52879 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2: default 1
+[2026-06-25 14:22:38.678259][UC][I] Triton is installed but 0 active driver(s) found (expected 1). Disabling Triton to prevent runtime errors. [52879,52879][importing.py:44,<module>]
+[2026-06-25 14:22:38.678357][UC][I] Triton not installed or not compatible; certain GPU-related functions will not be available. [52879,52879][importing.py:68,<module>]
+[2026-06-25 14:22:38.928532][UC][E] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: No module named 'triton._C.libtriton.ascend'; 'triton._C.libtriton' is not a package [52879,52879][config.py:29,<module>]
+[2026-06-25 14:22:38.954843][UC][I] Setting UCX_RCACHE_MAX_UNRELEASED to '1024' to avoid a rare memory leak in UCX when using NIXL. [52879,52879][nixl_utils.py:20,<module>]
+[2026-06-25 14:22:38.955245][UC][W] NIXL is not available [52879,52879][nixl_utils.py:34,<module>]
+[2026-06-25 14:22:38.955554][UC][W] NIXL agent config is not available [52879,52879][nixl_utils.py:44,<module>]
+[2026-06-25 14:22:38.988557][UC][W] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM. [52879,52879][registry.py:945,register_model]
+[2026-06-25 14:22:38.988625][UC][W] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP. [52879,52879][registry.py:945,register_model]
+[2026-06-25 14:22:39.447980][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader` [52879,52879][__init__.py:110,_wrapper]
+[2026-06-25 14:22:39.449726][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork` [52879,52879][__init__.py:110,_wrapper]
+[2026-06-25 14:22:39.464950][UC][I] Chunked prefill is enabled with max_num_batched_tokens=2048. [52879,52879][scheduler.py:239,__post_init__]
+[2026-06-25 14:22:39.680508][UC][I] vLLM server version 0.20.2, serving model /home/xty/gemma4/31B [52879,52879][utils.py:299,log_version_and_model]
+[2026-06-25 14:22:39.688126][UC][I] non-default args: {'model_tag': '/home/xty/gemma4/31B', 'port': 18005, 'model': '/home/xty/gemma4/31B', 'max_model_len': 8192, 'enforce_eager': True, 'served_model_name': ['gemma-4-31B'], 'tensor_parallel_size': 2, 'enable_prefix_caching': True} [52879,52879][utils.py:233,log_non_default_args]
+[2026-06-25 14:22:39.733537][UC][I] Resolved architecture: Gemma4ForConditionalGeneration [52879,52879][model.py:555,__post_init__]
+[2026-06-25 14:22:39.733656][UC][I] Using max model len 8192 [52879,52879][model.py:1680,get_and_verify_max_len]
+[2026-06-25 14:22:39.907630][UC][I] Gemma4 model has heterogeneous head dimensions (head_dim=256, global_head_dim=512). Forcing TRITON_ATTN backend to prevent mixed-backend numerical divergence. [52879,52879][config.py:101,verify_and_update_config]
+[2026-06-25 14:22:39.907771][UC][I] Asynchronous scheduling is enabled. [52879,52879][vllm.py:840,__post_init__]
+[2026-06-25 14:22:39.907813][UC][W] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none [52879,52879][vllm.py:896,__post_init__]
+[2026-06-25 14:22:39.907855][UC][W] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored. [52879,52879][vllm.py:914,__post_init__]
+[2026-06-25 14:22:39.908317][UC][I] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native']) [52879,52879][kernel.py:205,set_platform_defaults]
+[2026-06-25 14:22:39.908510][UC][I] Cudagraph is disabled under eager mode [52879,52879][vllm.py:1089,__post_init__]
+(APIServer pid=52879) WARNING 06-25 14:22:39 [platform.py:847] Parameter '--disable-cascade-attn' is a GPU-specific feature. Resetting to False for Ascend.
+(APIServer pid=52879) WARNING 06-25 14:22:39 [platform.py:936] Ignored parameter 'disable_flashinfer_prefill'. This is a GPU-specific feature not supported on Ascend. Resetting to False.
+(APIServer pid=52879) INFO 06-25 14:22:39 [platform.py:957] User specified attention backend 'AttentionBackendEnum.TRITON_ATTN'. Note that Ascend NPU will use its registered plugin backend instead. Resetting to None.
+(APIServer pid=52879) INFO 06-25 14:22:39 [ascend_config.py:684] Dynamic EPLB is False
+(APIServer pid=52879) INFO 06-25 14:22:39 [ascend_config.py:685] The number of redundant experts is 0
+(APIServer pid=52879) INFO 06-25 14:22:39 [platform.py:338] Compilation disabled, using eager mode by default
+(APIServer pid=52879) INFO 06-25 14:22:39 [utils.py:1321] Block size is set to 128 if prefix cache or chunked prefill is enabled.
+(APIServer pid=52879) INFO 06-25 14:22:39 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+[2026-06-25 14:22:39.913195][UC][I] Enabled custom fusions: norm_quant, act_quant [52879,52879][compilation.py:303,log_enabled_passes]
+INFO 06-25 14:23:00 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-25 14:23:00 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-25 14:23:00 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-25 14:23:00 [__init__.py:238] Platform plugin ascend is activated
+/usr/local/python3.11.15/lib/python3.11/site-packages/transformers/loss/loss_for_object_detection.py:27: UserWarning: A NumPy version >=1.22.4 and <2.3.0 is required for this version of SciPy (detected version 2.3.5)
+  from scipy.optimize import linear_sum_assignment
+[2026-06-25 14:23:07.553922][UC][I] Triton is installed but 0 active driver(s) found (expected 1). Disabling Triton to prevent runtime errors. [52991,52991][importing.py:44,<module>]
+[2026-06-25 14:23:07.554022][UC][I] Triton not installed or not compatible; certain GPU-related functions will not be available. [52991,52991][importing.py:68,<module>]
+[2026-06-25 14:23:09.550095][UC][E] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: No module named 'triton._C.libtriton.ascend'; 'triton._C.libtriton' is not a package [52991,52991][config.py:29,<module>]
+[2026-06-25 14:23:09.578067][UC][W] NIXL is not available [52991,52991][nixl_utils.py:34,<module>]
+[2026-06-25 14:23:09.578434][UC][W] NIXL agent config is not available [52991,52991][nixl_utils.py:44,<module>]
+(EngineCore pid=52991) 2026-06-25 14:23:09,707 - 52991 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2: default 1
+[2026-06-25 14:23:09.712153][UC][W] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM. [52991,52991][registry.py:945,register_model]
+[2026-06-25 14:23:09.712227][UC][W] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP. [52991,52991][registry.py:945,register_model]
+[2026-06-25 14:23:10.226268][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader` [52991,52991][__init__.py:110,_wrapper]
+[2026-06-25 14:23:10.247480][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork` [52991,52991][__init__.py:110,_wrapper]
+[2026-06-25 14:23:10.248437][UC][I] Initializing a V1 LLM engine (v0.20.2) with config: model='/home/xty/gemma4/31B', speculative_config=None, tokenizer='/home/xty/gemma4/31B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=8192, download_dir=None, load_format=auto, tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=True, quantization=None, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=npu, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=gemma-4-31B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'vllm_ascend.compilation.compiler_interface.AscendCompiler', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [2048], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['native']), enable_flashinfer_autotune=True, moe_backend='auto') [52991,52991][core.py:109,__init__]
+[2026-06-25 14:23:10.249158][UC][I] DP group leader: node_rank=0, node_rank_within_dp=0, master_addr=127.0.0.1, mq_connect_ip=192.168.9.179 (local), world_size=2, local_world_size=2 [52991,52991][multiproc_executor.py:139,_init_executor]
+INFO 06-25 14:23:18 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-25 14:23:18 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-25 14:23:18 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-25 14:23:18 [__init__.py:238] Platform plugin ascend is activated
+INFO 06-25 14:23:18 [__init__.py:44] Available plugins for group vllm.platform_plugins:
+INFO 06-25 14:23:18 [__init__.py:46] - ascend -> vllm_ascend:register
+INFO 06-25 14:23:18 [__init__.py:49] All plugins in this group will be loaded. Set `VLLM_PLUGINS` to control which plugins to load.
+INFO 06-25 14:23:18 [__init__.py:238] Platform plugin ascend is activated
+/usr/local/python3.11.15/lib/python3.11/site-packages/transformers/loss/loss_for_object_detection.py:27: UserWarning: A NumPy version >=1.22.4 and <2.3.0 is required for this version of SciPy (detected version 2.3.5)
+  from scipy.optimize import linear_sum_assignment
+/usr/local/python3.11.15/lib/python3.11/site-packages/transformers/loss/loss_for_object_detection.py:27: UserWarning: A NumPy version >=1.22.4 and <2.3.0 is required for this version of SciPy (detected version 2.3.5)
+  from scipy.optimize import linear_sum_assignment
+2026-06-25 14:23:26,202 - 53003 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2: default 1
+[2026-06-25 14:23:26.214860][UC][I] Triton is installed but 0 active driver(s) found (expected 1). Disabling Triton to prevent runtime errors. [53003,53003][importing.py:44,<module>]
+[2026-06-25 14:23:26.214935][UC][I] Triton not installed or not compatible; certain GPU-related functions will not be available. [53003,53003][importing.py:68,<module>]
+2026-06-25 14:23:26,710 - 53002 - ServiceProfiler - INFO - VLLM_USE_V1 not set, auto-detected via vLLM 0.20.2: default 1
+[2026-06-25 14:23:26.722724][UC][I] Triton is installed but 0 active driver(s) found (expected 1). Disabling Triton to prevent runtime errors. [53002,53002][importing.py:44,<module>]
+[2026-06-25 14:23:26.722802][UC][I] Triton not installed or not compatible; certain GPU-related functions will not be available. [53002,53002][importing.py:68,<module>]
+[2026-06-25 14:23:27.756835][UC][E] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: No module named 'triton._C.libtriton.ascend'; 'triton._C.libtriton' is not a package [53003,53003][config.py:29,<module>]
+[2026-06-25 14:23:28.222280][UC][W] NIXL is not available [53003,53003][nixl_utils.py:34,<module>]
+[2026-06-25 14:23:28.222688][UC][W] NIXL agent config is not available [53003,53003][nixl_utils.py:44,<module>]
+[2026-06-25 14:23:28.253719][UC][W] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM. [53003,53003][registry.py:945,register_model]
+[2026-06-25 14:23:28.253809][UC][W] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP. [53003,53003][registry.py:945,register_model]
+[2026-06-25 14:23:28.356000][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader` [53003,53003][__init__.py:110,_wrapper]
+[2026-06-25 14:23:28.359632][UC][E] Failed to import Triton kernels. Please make sure your triton version is compatible. Error: No module named 'triton._C.libtriton.ascend'; 'triton._C.libtriton' is not a package [53002,53002][config.py:29,<module>]
+[2026-06-25 14:23:28.380008][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork` [53003,53003][__init__.py:110,_wrapper]
+[2026-06-25 14:23:29.048350][UC][W] NIXL is not available [53002,53002][nixl_utils.py:34,<module>]
+[2026-06-25 14:23:29.048713][UC][W] NIXL agent config is not available [53002,53002][nixl_utils.py:44,<module>]
+[2026-06-25 14:23:29.080086][UC][W] Model architecture DeepseekV4ForCausalLM is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4:AscendDeepseekV4ForCausalLM. [53002,53002][registry.py:945,register_model]
+[2026-06-25 14:23:29.080152][UC][W] Model architecture DeepSeekV4MTPModel is already registered, and will be overwritten by the new model class vllm_ascend.models.deepseek_v4_mtp:DeepSeekV4MTP. [53002,53002][registry.py:945,register_model]
+`Qwen2VLImageProcessorFast` is deprecated. The `Fast` suffix for image processors has been removed; use `Qwen2VLImageProcessor` instead.
+[2026-06-25 14:23:29.180191][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.netloader.netloader.ModelNetLoaderElastic'>` with load format `netloader` [53002,53002][__init__.py:110,_wrapper]
+[2026-06-25 14:23:29.199844][UC][I] Registered model loader `<class 'vllm_ascend.model_loader.rfork.rfork_loader.RForkModelLoader'>` with load format `rfork` [53002,53002][__init__.py:110,_wrapper]
+`Qwen2VLImageProcessorFast` is deprecated. The `Fast` suffix for image processors has been removed; use `Qwen2VLImageProcessor` instead.
+INFO 06-25 14:23:36 [ascend_config.py:684] Dynamic EPLB is False
+INFO 06-25 14:23:36 [ascend_config.py:685] The number of redundant experts is 0
+INFO 06-25 14:23:37 [ascend_config.py:684] Dynamic EPLB is False
+INFO 06-25 14:23:37 [ascend_config.py:685] The number of redundant experts is 0
+[2026-06-25 14:23:38.288154][UC][I] world_size=2 rank=1 local_rank=1 distributed_init_method=tcp://127.0.0.1:58927 backend=hccl [53003,53003][parallel_state.py:1402,init_distributed_environment]
+[2026-06-25 14:23:39.474812][UC][I] world_size=2 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:58927 backend=hccl [53002,53002][parallel_state.py:1402,init_distributed_environment]
+[2026-06-25 14:23:40.105641][UC][I] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A [53002,53002][parallel_state.py:1715,initialize_model_parallel]
+[2026-06-25 14:23:40.158317][UC][I] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 1, EP rank N/A, EPLB rank N/A [53003,53003][parallel_state.py:1715,initialize_model_parallel]
+(Worker_TP0 pid=53002) INFO 06-25 14:23:40 [model_runner_v1.py:3342] Starting to load model /home/xty/gemma4/31B...
+(Worker_TP1 pid=53003) INFO 06-25 14:23:40 [model_runner_v1.py:3342] Starting to load model /home/xty/gemma4/31B...
+[2026-06-25 14:23:41.109128][UC][I] Asynchronous scheduling is enabled. [53002,53002][vllm.py:840,__post_init__]
+[2026-06-25 14:23:41.109231][UC][W] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none [53002,53002][vllm.py:896,__post_init__]
+[2026-06-25 14:23:41.109278][UC][W] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored. [53002,53002][vllm.py:914,__post_init__]
+[2026-06-25 14:23:41.109859][UC][I] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native']) [53002,53002][kernel.py:205,set_platform_defaults]
+[2026-06-25 14:23:41.110041][UC][I] Cudagraph is disabled under eager mode [53002,53002][vllm.py:1089,__post_init__]
+(Worker_TP0 pid=53002) INFO 06-25 14:23:41 [platform.py:338] Compilation disabled, using eager mode by default
+(Worker_TP0 pid=53002) INFO 06-25 14:23:41 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+[2026-06-25 14:23:41.112175][UC][I] Enabled custom fusions: norm_quant, act_quant [53002,53002][compilation.py:303,log_enabled_passes]
+[2026-06-25 14:23:41.205056][UC][I] Asynchronous scheduling is enabled. [53003,53003][vllm.py:840,__post_init__]
+[2026-06-25 14:23:41.205191][UC][W] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none [53003,53003][vllm.py:896,__post_init__]
+[2026-06-25 14:23:41.205246][UC][W] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored. [53003,53003][vllm.py:914,__post_init__]
+[2026-06-25 14:23:41.205891][UC][I] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native']) [53003,53003][kernel.py:205,set_platform_defaults]
+[2026-06-25 14:23:41.206077][UC][I] Cudagraph is disabled under eager mode [53003,53003][vllm.py:1089,__post_init__]
+(Worker_TP1 pid=53003) INFO 06-25 14:23:41 [platform.py:338] Compilation disabled, using eager mode by default
+(Worker_TP1 pid=53003) INFO 06-25 14:23:41 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+[2026-06-25 14:23:41.208528][UC][I] Enabled custom fusions: norm_quant, act_quant [53003,53003][compilation.py:303,log_enabled_passes]
+[2026-06-25 14:23:43.373509][UC][I] Filesystem type for checkpoints: EXT4. Checkpoint size: 58.25 GiB. Available RAM: 722.63 GiB. [53002,53002][weight_utils.py:904,safetensors_weights_iterator]
+[2026-06-25 14:23:43.373640][UC][I] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch. [53002,53002][weight_utils.py:927,safetensors_weights_iterator]
+(Worker_TP0 pid=53002) Loading safetensors checkpoint shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+[2026-06-25 14:23:43.509310][UC][I] Filesystem type for checkpoints: EXT4. Checkpoint size: 58.25 GiB. Available RAM: 722.63 GiB. [53003,53003][weight_utils.py:904,safetensors_weights_iterator]
+[2026-06-25 14:23:43.509402][UC][I] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch. [53003,53003][weight_utils.py:927,safetensors_weights_iterator]
+[2026-06-25 14:24:21.054278][UC][I] Loading weights took 37.54 seconds [53003,53003][default_loader.py:384,load_weights]
+(Worker_TP1 pid=53003) INFO 06-25 14:24:23 [model_runner_v1.py:3389] Loading model weights took 30.3909 GB
+(Worker_TP0 pid=53002) Loading safetensors checkpoint shards:  50% Completed | 1/2 [00:42<00:42, 42.81s/it]
+(Worker_TP0 pid=53002) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:55<00:00, 25.08s/it]
+(Worker_TP0 pid=53002) Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:55<00:00, 27.74s/it]
+(Worker_TP0 pid=53002) 
+[2026-06-25 14:24:39.487639][UC][I] Loading weights took 56.11 seconds [53002,53002][default_loader.py:384,load_weights]
+(Worker_TP0 pid=53002) INFO 06-25 14:24:41 [model_runner_v1.py:3389] Loading model weights took 30.3909 GB
+[2026-06-25 14:24:42.579718][UC][I] Encoder cache will be initialized with a budget of 2496 tokens, and profiled with 1 video items of the maximum feature size. [53003,53003][gpu_model_runner.py:5820,profile_run]
+[2026-06-25 14:24:42.589321][UC][I] Encoder cache will be initialized with a budget of 2496 tokens, and profiled with 1 video items of the maximum feature size. [53002,53002][gpu_model_runner.py:5820,profile_run]
+(Worker_TP0 pid=53002) INFO 06-25 14:25:14 [worker.py:394] Available KV cache memory: 24.10 GiB
+[2026-06-25 14:25:15.557530][UC][I] GPU KV cache size: 128,723 tokens [52991,52991][kv_cache_utils.py:1708,_report_kv_cache_config]
+[2026-06-25 14:25:15.557645][UC][I] Maximum concurrency for 8,192 tokens per request: 15.71x [52991,52991][kv_cache_utils.py:1709,_report_kv_cache_config]
+(Worker_TP0 pid=53002) INFO 06-25 14:25:16 [worker.py:546] Free memory on device (60.62/60.96 GiB) on startup. Desired GPU memory utilization is (0.92, 56.08 GiB). Actual usage: 30.39 GiB for weights, 0.89 GiB for peak activation, 0.71 GiB for non-torch memory, 0.0 GiB for NPU graph memory. Replace gpu_memory_utilization with `--kv-cache-memory=25718802022` (23.95 GiB) to fit into requested memory, or `--kv-cache-memory=30590967808` (28.49 GiB) to fully utilize NPU free memory. Current KV cache memory: 24.1 GiB.
+(Worker_TP1 pid=53003) INFO 06-25 14:25:16 [worker.py:546] Free memory on device (60.62/60.96 GiB) on startup. Desired GPU memory utilization is (0.92, 56.08 GiB). Actual usage: 30.39 GiB for weights, 0.89 GiB for peak activation, 0.71 GiB for non-torch memory, 0.0 GiB for NPU graph memory. Replace gpu_memory_utilization with `--kv-cache-memory=25717352038` (23.95 GiB) to fit into requested memory, or `--kv-cache-memory=30589800448` (28.49 GiB) to fully utilize NPU free memory. Current KV cache memory: 24.1 GiB.
+(Worker_TP0 pid=53002) INFO 06-25 14:25:18 [cpu_binding.py:328] [cpu_bind_mode] mode=topo_affinity rank=0 visible_npus=[0, 1]
+(Worker_TP0 pid=53002) INFO 06-25 14:25:18 [cpu_binding.py:388] The CPU allocation plan is as follows:
+(Worker_TP0 pid=53002) INFO 06-25 14:25:18 [cpu_binding.py:393] NPU0: main=[146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165]  acl=[166]  release=[[167]]
+(Worker_TP0 pid=53002) INFO 06-25 14:25:18 [cpu_binding.py:415] [migrate] NPU:0 -> NUMA [6]
+(Worker_TP1 pid=53003) INFO 06-25 14:25:18 [cpu_binding.py:328] [cpu_bind_mode] mode=topo_affinity rank=1 visible_npus=[0, 1]
+(Worker_TP1 pid=53003) INFO 06-25 14:25:18 [cpu_binding.py:388] The CPU allocation plan is as follows:
+(Worker_TP1 pid=53003) INFO 06-25 14:25:18 [cpu_binding.py:393] NPU1: main=[170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189]  acl=[190]  release=[[191]]
+(Worker_TP1 pid=53003) INFO 06-25 14:25:19 [cpu_binding.py:415] [migrate] NPU:1 -> NUMA [7]
+(Worker_TP1 pid=53003) INFO 06-25 14:25:26 [cpu_binding.py:510] NPU1(PCI 0000:c2:00.0): sq_send_trigger_irq IRQ_ID=3009 -> CPU168, cq_update_irq IRQ_ID=3010 -> CPU169
+(Worker_TP0 pid=53002) INFO 06-25 14:25:27 [cpu_binding.py:510] NPU0(PCI 0000:c1:00.0): sq_send_trigger_irq IRQ_ID=2753 -> CPU144, cq_update_irq IRQ_ID=2754 -> CPU145
+[2026-06-25 14:25:27.458905][UC][I] init engine (profile, create kv cache, warmup model) took 45.46 s [52991,52991][core.py:306,_initialize_kv_caches]
+[2026-06-25 14:25:32.537951][UC][I] Asynchronous scheduling is enabled. [52991,52991][vllm.py:840,__post_init__]
+[2026-06-25 14:25:32.538053][UC][W] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none [52991,52991][vllm.py:896,__post_init__]
+[2026-06-25 14:25:32.538102][UC][W] Inductor compilation was disabled by user settings, optimizations settings that are only active during inductor compilation will be ignored. [52991,52991][vllm.py:914,__post_init__]
+[2026-06-25 14:25:32.538720][UC][I] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['native']) [52991,52991][kernel.py:205,set_platform_defaults]
+[2026-06-25 14:25:32.538870][UC][I] Cudagraph is disabled under eager mode [52991,52991][vllm.py:1089,__post_init__]
+(EngineCore pid=52991) INFO 06-25 14:25:32 [ascend_config.py:684] Dynamic EPLB is False
+(EngineCore pid=52991) INFO 06-25 14:25:32 [ascend_config.py:685] The number of redundant experts is 0
+(EngineCore pid=52991) INFO 06-25 14:25:32 [platform.py:338] Compilation disabled, using eager mode by default
+(EngineCore pid=52991) INFO 06-25 14:25:32 [platform.py:581] Set PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+[2026-06-25 14:25:32.596760][UC][I] Enabled custom fusions: norm_quant, act_quant [52991,52991][compilation.py:303,log_enabled_passes]
+[2026-06-25 14:25:32.601529][UC][I] Supported tasks: ['generate'] [52879,52879][api_server.py:598,build_and_serve]
+[2026-06-25 14:25:32.804411][UC][W] Default vLLM sampling parameters have been overridden by the model's `generation_config.json`: `{'temperature': 1.0, 'top_k': 64, 'top_p': 0.95}`. If this is not intended, please relaunch vLLM instance with `--generation-config vllm`. [52879,52879][model.py:1437,get_diff_sampling_param]
+[2026-06-25 14:25:37.806063][UC][I] Detected the chat template content format to be 'openai'. You can set `--chat-template-content-format` to override this. [52879,52879][hf.py:314,_log_chat_template_content_format]
+[2026-06-25 14:26:00.088426][UC][I] Multi-modal warmup completed in 22.152s [52879,52879][base.py:233,_warmup_mm_processor]
+[2026-06-25 14:26:17.539945][UC][I] Readonly multi-modal warmup completed in 17.451s [52879,52879][base.py:233,_warmup_mm_processor]
+[2026-06-25 14:26:17.542555][UC][I] Starting vLLM server on http://0.0.0.0:18005 [52879,52879][api_server.py:602,build_and_serve]
+[2026-06-25 14:26:17.542640][UC][I] Available routes are: [52879,52879][launcher.py:37,serve_http]
+[2026-06-25 14:26:17.542677][UC][I] Route: /openapi.json, Methods: HEAD, GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542699][UC][I] Route: /docs, Methods: HEAD, GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542716][UC][I] Route: /docs/oauth2-redirect, Methods: HEAD, GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542733][UC][I] Route: /redoc, Methods: HEAD, GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542752][UC][I] Route: /tokenize, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542802][UC][I] Route: /detokenize, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542819][UC][I] Route: /load, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542847][UC][I] Route: /version, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542864][UC][I] Route: /health, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542880][UC][I] Route: /metrics, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542897][UC][I] Route: /v1/models, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542912][UC][I] Route: /ping, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542928][UC][I] Route: /ping, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542943][UC][I] Route: /invocations, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542959][UC][I] Route: /v1/chat/completions, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542974][UC][I] Route: /v1/chat/completions/batch, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.542988][UC][I] Route: /v1/responses, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543006][UC][I] Route: /v1/responses/{response_id}, Methods: GET [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543021][UC][I] Route: /v1/responses/{response_id}/cancel, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543036][UC][I] Route: /v1/completions, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543052][UC][I] Route: /v1/messages, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543067][UC][I] Route: /v1/messages/count_tokens, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543082][UC][I] Route: /inference/v1/generate, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543097][UC][I] Route: /scale_elastic_ep, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543112][UC][I] Route: /is_scaling_elastic_ep, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543127][UC][I] Route: /generative_scoring, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543143][UC][I] Route: /v1/chat/completions/render, Methods: POST [52879,52879][launcher.py:46,serve_http]
+[2026-06-25 14:26:17.543203][UC][I] Route: /v1/completions/render, Methods: POST [52879,52879][launcher.py:46,serve_http]
+(APIServer pid=52879) INFO:     Started server process [52879]
+(APIServer pid=52879) INFO:     Waiting for application startup.
+(APIServer pid=52879) INFO:     Application startup complete.
+(APIServer pid=52879) INFO:     127.0.0.1:51062 - "POST /v1/chat/completions HTTP/1.1" 200 OK
+[2026-06-25 14:26:48.018020][UC][I] Engine 000: Avg prompt throughput: 2.0 tokens/s, Avg generation throughput: 0.2 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%, Prefix cache hit rate: 0.0% [52879,52879][loggers.py:271,log]
+[2026-06-25 14:26:58.017985][UC][I] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%, Prefix cache hit rate: 0.0% [52879,52879][loggers.py:271,log]

@@ -63,7 +63,10 @@ def _patch_named_tool_choice_bool() -> None:
 _patch_named_tool_choice_bool()
 
 
-_original_parse_tool_calls_from_content = OpenAIServing._parse_tool_calls_from_content
+if hasattr(OpenAIServing, '_parse_tool_calls_from_content'):
+    _original_parse_tool_calls_from_content = OpenAIServing._parse_tool_calls_from_content
+else:
+    _original_parse_tool_calls_from_content = None
 
 
 def _patched_parse_tool_calls_from_content(
@@ -87,9 +90,11 @@ def _patched_parse_tool_calls_from_content(
     )
 
 
-OpenAIServing._parse_tool_calls_from_content = staticmethod(_patched_parse_tool_calls_from_content)
+if _original_parse_tool_calls_from_content is not None:
+    OpenAIServing._parse_tool_calls_from_content = staticmethod(_patched_parse_tool_calls_from_content)
 
-_original_delegating_parse_tool_calls = DelegatingParser._parse_tool_calls
+if hasattr(DelegatingParser, '_parse_tool_calls'):
+    _original_delegating_parse_tool_calls = DelegatingParser._parse_tool_calls
 
 
 def _patched_delegating_parse_tool_calls(
@@ -109,4 +114,5 @@ def _patched_delegating_parse_tool_calls(
     )
 
 
-DelegatingParser._parse_tool_calls = _patched_delegating_parse_tool_calls
+if hasattr(DelegatingParser, '_parse_tool_calls'):
+    DelegatingParser._parse_tool_calls = _patched_delegating_parse_tool_calls

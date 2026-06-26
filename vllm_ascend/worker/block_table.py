@@ -5,8 +5,16 @@ from vllm.utils.math_utils import cdiv
 from vllm.v1.attention.backends.utils import PAD_SLOT_ID
 from vllm.v1.kv_cache_interface import KVCacheGroupSpec
 from vllm.v1.utils import CpuGpuBuffer
-from vllm.v1.worker.block_table import _compute_slot_mapping_kernel
 from vllm.v1.worker.cp_utils import get_total_cp_world_size
+
+try:
+    from vllm.v1.worker.block_table import _compute_slot_mapping_kernel
+    # Test if kernel is subscriptable (Triton available)
+    _compute_slot_mapping_kernel.plumb  # any attribute test
+    _HAS_KERNEL = True
+except (AttributeError, TypeError):
+    _compute_slot_mapping_kernel = None
+    _HAS_KERNEL = False
 
 
 class BlockTable:
@@ -144,7 +152,8 @@ class BlockTable:
         num_tokens = positions.shape[0]
         total_cp_world_size = self.pcp_world_size * self.dcp_world_size
         total_cp_rank = self.pcp_rank * self.dcp_world_size + self.dcp_rank
-        _compute_slot_mapping_kernel[(num_reqs + 1,)](
+        if _HAS_KERNEL:
+            _compute_slot_mapping_kernel[(num_reqs + 1,)](
             num_tokens,
             self.max_num_batched_tokens,
             query_start_loc,
@@ -159,7 +168,28 @@ class BlockTable:
             PAD_ID=PAD_SLOT_ID,
             BLOCK_SIZE=1024,
         )
-
+        else:
+            # CPU fallback when Triton kernel not available
+            btable = self.block_table.gpu
+            slot_map = self.slot_mapping.gpu.view(-1)
+            bs = self.block_size
+            query_start_loc_cpu = query_start_loc.cpu()
+            positions_cpu = positions.cpu()
+            for i in range(num_reqs):
+                start = query_start_loc_cpu[i].item()
+                end = query_start_loc_cpu[i + 1].item()
+                for j in range(start, end):
+                    pos = positions_cpu[j].item()
+                    block_idx = pos // bs
+                    block_offset = pos % bs
+                    if block_idx < btable.size(1):
+                        blk = btable[i, block_idx].item()
+                        if blk >= 0:
+                            slot_map[j] = blk * bs + block_offset
+                        else:
+                            slot_map[j] = PAD_SLOT_ID
+                    else:
+                        slot_map[j] = PAD_SLOT_ID
     def compute_slot_mapping_draft(self, req_indices: np.ndarray, positions: np.ndarray) -> None:
         # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
         # -> [0, 0, K, K, K + 1, K + 1, K + 2, 2 * K, 2 * K, 2 * K + 1]
