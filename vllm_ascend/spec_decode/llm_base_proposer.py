@@ -310,6 +310,8 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
                 "Qwen3_5MoeForConditionalGeneration",
             ]:
                 self.model.config.image_token_index = model.config.image_token_id
+            elif self.get_model_name(model) == "Gemma4ForConditionalGeneration":
+                self.model.config.image_token_index = model.config.image_token_id
             elif self.get_model_name(model) == "PixtralForConditionalGeneration":
                 self.model.config.image_token_index = model.config.vision_config.image_token_id
             elif self.get_model_name(model) == "KimiK25ForConditionalGeneration":
