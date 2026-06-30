@@ -3402,21 +3402,19 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
-            # When EAGLE3 aux hidden states are enabled, the model returns
-            # (hidden_states, [aux0, aux1, aux2]). NPU graph capture does not
-            # correctly handle nested lists in the output tuple — the aux
-            # tensors are not registered as graph outputs and become stale
-            # on replay. Flatten the output tuple so all tensors are captured.
+            # When EAGLE3 aux hidden states are enabled, patch the model
+            # forward to return a flat tuple (hidden_states, aux0, aux1, aux2)
+            # instead of (hidden_states, [aux0, aux1, aux2]). NPU graph
+            # capture does not correctly handle nested lists — the list
+            # elements are not registered as graph outputs and become stale.
             if self.use_aux_hidden_state_outputs:
-                _raw_model = self.model
-                class _FlatOutputWrapper(torch.nn.Module):
-                    def __init__(self, raw):
-                        super().__init__()
-                        self._raw = raw
-                    def forward(self, *args, **kwargs):
-                        result = self._raw(*args, **kwargs)
-                        return result if not isinstance(result, tuple) else (result[0], *result[1])
-                self.model = _FlatOutputWrapper(_raw_model)
+                _orig_forward = self.model.forward
+                def _flat_forward(*args, **kwargs):
+                    result = _orig_forward(*args, **kwargs)
+                    if isinstance(result, tuple) and len(result) > 1 and not torch.is_tensor(result[1]):
+                        return (result[0], *result[1])
+                    return result
+                self.model.forward = _flat_forward
             self.model = ACLGraphWrapper(
                 self.model,
                 self.vllm_config,
