@@ -3409,27 +3409,46 @@ class NPUModelRunner(GPUModelRunner):
             # written to pre-allocated persistent buffers via in-place copy
             # which the graph does capture correctly.
             if self.use_aux_hidden_state_outputs:
+                # _maybe_add_hidden_state uses Python list.append() which is
+                # NOT captured by torch.npu.graph — on replay the aux list is
+                # always empty.  Replace with pre-allocated tensor buffers
+                # using a layer→index map (deterministic since aux layers are
+                # known at load time: [2, 30, 57]).
+                num_aux = 3
                 max_tokens = self.max_num_tokens
                 hidden_size = self.model.config.hidden_size
-                num_aux = 3  # EAGLE3 standard
                 self._aux_output_buffers = [
                     torch.zeros(max_tokens, hidden_size, dtype=self.dtype,
                                 device=self.device)
                     for _ in range(num_aux)
                 ]
-                _raw_forward = self.model.forward
+                # Build layer_idx -> buffer_index map
+                _aux_layer_map = {}
+                for i, layer_id in enumerate(
+                    self.model.aux_hidden_state_layers
+                ):
+                    _aux_layer_map[layer_id] = i
                 _aux_bufs = self._aux_output_buffers
-                def _flat_forward(*args, **kwargs):
+
+                def _graph_safe_maybe_add(aux_hidden_states, layer_idx,
+                                           hidden_states, residual):
+                    if layer_idx in _aux_layer_map:
+                        value = (hidden_states + residual
+                                 if residual is not None else hidden_states)
+                        buf_idx = _aux_layer_map[layer_idx]
+                        n = min(value.shape[0], _aux_bufs[buf_idx].shape[0])
+                        _aux_bufs[buf_idx][:n].copy_(value[:n])
+                    return aux_hidden_states
+
+                self.model._maybe_add_hidden_state = _graph_safe_maybe_add
+
+                _raw_forward = self.model.forward
+                def _single_output_forward(*args, **kwargs):
                     result = _raw_forward(*args, **kwargs)
-                    if isinstance(result, tuple) and len(result) == 2:
-                        hs, aux = result
-                        if isinstance(aux, list) and len(aux) == num_aux:
-                            for i, a in enumerate(aux):
-                                n = min(a.shape[0], _aux_bufs[i].shape[0])
-                                _aux_bufs[i][:n].copy_(a[:n])
-                            return hs
+                    if isinstance(result, tuple):
+                        return result[0]
                     return result
-                self.model.forward = _flat_forward
+                self.model.forward = _single_output_forward
 
             self.model = ACLGraphWrapper(
                 self.model,
