@@ -1984,12 +1984,13 @@ class NPUModelRunner(GPUModelRunner):
                 hidden_states, aux_hidden_states = unpack_aux_hidden_states_output(
                     hidden_states
                 )
-                # NPU graph replay may return stale aux tensors even from a
-                # flat tuple. Force a clone when in full-graph mode to
-                # guarantee fresh data for the Eagle proposer.
-                if (self.compilation_config.cudagraph_mode.has_full_cudagraphs()
-                        and aux_hidden_states is not None):
-                    aux_hidden_states = [h.clone() for h in aux_hidden_states]
+                # NPU graph replay may return stale tensors. Force clones
+                # when in full-graph mode so the Eagle proposer receives
+                # fresh hidden_states and aux data.
+                if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
+                    hidden_states = hidden_states.clone()
+                    if aux_hidden_states is not None:
+                        aux_hidden_states = [h.clone() for h in aux_hidden_states]
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
