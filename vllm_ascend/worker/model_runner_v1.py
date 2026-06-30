@@ -3273,7 +3273,10 @@ class NPUModelRunner(GPUModelRunner):
                     **model_kwargs,
                 )
             if self.use_aux_hidden_state_outputs:
-                hidden_states, _ = outputs
+                from vllm_ascend.attention.aux_hs_utils import (
+                    unpack_aux_hidden_states_output,
+                )
+                hidden_states, _ = unpack_aux_hidden_states_output(outputs)
             else:
                 hidden_states = outputs
             dummy_compute_logits(hidden_states)
