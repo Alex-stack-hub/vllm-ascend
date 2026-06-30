@@ -3416,7 +3416,11 @@ class NPUModelRunner(GPUModelRunner):
                 # known at load time: [2, 30, 57]).
                 num_aux = 3
                 max_tokens = self.max_num_tokens
-                hidden_size = self.model.config.hidden_size
+                _hf_config = self.vllm_config.model_config.hf_config
+                hidden_size = getattr(
+                    getattr(_hf_config, 'text_config', _hf_config),
+                    'hidden_size'
+                )
                 self._aux_output_buffers = [
                     torch.zeros(max_tokens, hidden_size, dtype=self.dtype,
                                 device=self.device)
