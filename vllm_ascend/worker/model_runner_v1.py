@@ -1978,13 +1978,18 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                hidden_states, aux_hidden_states = hidden_states
-                # When target model is running in FULL graph mode, the
-                # aux_hidden_states tensors in the output tuple are captured
-                # at graph-build time and may not be refreshed on replay.
-                # Clone them to get fresh outputs for the Eagle proposer.
-                if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
-                    aux_hidden_states = [h.clone() for h in aux_hidden_states]
+                # In FULL graph mode, the FlatOutputWrapper flattens the
+                # model output from (hs, [aux0,aux1,aux2]) into a flat tuple
+                # (hs, aux0, aux1, aux2) so NPU graph capture correctly
+                # handles every tensor as a graph output.
+                # Detect flat tuple: 2nd element is a Tensor, not a list.
+                if (isinstance(hidden_states, tuple)
+                        and len(hidden_states) > 2
+                        and torch.is_tensor(hidden_states[1])):
+                    hidden_states, *aux_list = hidden_states
+                    aux_hidden_states = list(aux_list)
+                else:
+                    hidden_states, aux_hidden_states = hidden_states
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
@@ -3397,6 +3402,21 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
+            # When EAGLE3 aux hidden states are enabled, the model returns
+            # (hidden_states, [aux0, aux1, aux2]). NPU graph capture does not
+            # correctly handle nested lists in the output tuple — the aux
+            # tensors are not registered as graph outputs and become stale
+            # on replay. Flatten the output tuple so all tensors are captured.
+            if self.use_aux_hidden_state_outputs:
+                _raw_model = self.model
+                class _FlatOutputWrapper(torch.nn.Module):
+                    def __init__(self, raw):
+                        super().__init__()
+                        self._raw = raw
+                    def forward(self, *args, **kwargs):
+                        result = self._raw(*args, **kwargs)
+                        return result if not isinstance(result, tuple) else (result[0], *result[1])
+                self.model = _FlatOutputWrapper(_raw_model)
             self.model = ACLGraphWrapper(
                 self.model,
                 self.vllm_config,
