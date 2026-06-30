@@ -1978,19 +1978,17 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                from vllm_ascend.attention.aux_hs_utils import (
-                    unpack_aux_hidden_states_output,
-                )
-                hidden_states, aux_hidden_states = unpack_aux_hidden_states_output(
-                    hidden_states
-                )
-                # NPU graph replay may return stale tensors. Force clones
-                # when in full-graph mode so the Eagle proposer receives
-                # fresh hidden_states and aux data.
-                if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
-                    hidden_states = hidden_states.clone()
-                    if aux_hidden_states is not None:
-                        aux_hidden_states = [h.clone() for h in aux_hidden_states]
+                if hasattr(self, '_aux_output_buffers'):
+                    # Graph mode: aux was written to pre-allocated buffers
+                    # via in-place copy_ inside the graph capture.
+                    # Slice to the actual number of tokens.
+                    aux_hidden_states = [
+                        buf[:hidden_states.shape[0]].clone()
+                        for buf in self._aux_output_buffers
+                    ]
+                else:
+                    # Eager mode: normal (hs, [aux0, aux1, aux2]) tuple
+                    hidden_states, aux_hidden_states = hidden_states
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
@@ -3279,11 +3277,8 @@ class NPUModelRunner(GPUModelRunner):
                     inputs_embeds,
                     **model_kwargs,
                 )
-            if self.use_aux_hidden_state_outputs:
-                from vllm_ascend.attention.aux_hs_utils import (
-                    unpack_aux_hidden_states_output,
-                )
-                hidden_states, _ = unpack_aux_hidden_states_output(outputs)
+            if self.use_aux_hidden_state_outputs and isinstance(outputs, tuple):
+                hidden_states, _ = outputs
             else:
                 hidden_states = outputs
             dummy_compute_logits(hidden_states)
@@ -3406,6 +3401,36 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
+            # When EAGLE3 aux hidden states are active and the model returns
+            # (hidden_states, [aux0, aux1, aux2]), NPU graph capture does not
+            # correctly handle multi-element or nested outputs — the aux
+            # tensors are stale on replay.  Wrap the model so only a single
+            # tensor (hidden_states) is the graph output; aux tensors are
+            # written to pre-allocated persistent buffers via in-place copy
+            # which the graph does capture correctly.
+            if self.use_aux_hidden_state_outputs:
+                max_tokens = self.max_num_tokens
+                hidden_size = self.model.config.hidden_size
+                num_aux = 3  # EAGLE3 standard
+                self._aux_output_buffers = [
+                    torch.zeros(max_tokens, hidden_size, dtype=self.dtype,
+                                device=self.device)
+                    for _ in range(num_aux)
+                ]
+                _raw_forward = self.model.forward
+                _aux_bufs = self._aux_output_buffers
+                def _flat_forward(*args, **kwargs):
+                    result = _raw_forward(*args, **kwargs)
+                    if isinstance(result, tuple) and len(result) == 2:
+                        hs, aux = result
+                        if isinstance(aux, list) and len(aux) == num_aux:
+                            for i, a in enumerate(aux):
+                                n = min(a.shape[0], _aux_bufs[i].shape[0])
+                                _aux_bufs[i][:n].copy_(a[:n])
+                            return hs
+                    return result
+                self.model.forward = _flat_forward
+
             self.model = ACLGraphWrapper(
                 self.model,
                 self.vllm_config,
