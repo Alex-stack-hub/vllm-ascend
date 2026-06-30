@@ -887,6 +887,23 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
         num_tokens,
         is_prefill=None,
     ) -> torch.Tensor:
+        # When num_input_tokens > num_tokens (graph-mode dispatcher padding),
+        # the [num_tokens:num_input_tokens] tail of input buffers was not
+        # written by set_inputs_first_pass and retains stale data from a
+        # previous generate(). Zero-fill before the first merged forward.
+        if num_input_tokens > num_tokens:
+            pad_s = slice(num_tokens, num_input_tokens)
+            self.input_ids[pad_s] = 0
+            self.hidden_states[pad_s] = 0
+            if hasattr(self, "inputs_embeds") and self.inputs_embeds is not None:
+                self.inputs_embeds[pad_s] = 0
+            if self.uses_mrope:
+                self.mrope_positions[:, pad_s] = 0
+            elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
+                self.xdrope_positions[:, pad_s] = 0
+            else:
+                self.positions[pad_s] = 0
+
         # The lifecycle of `input_ids`, `positions`, `hidden_states` runs through all
         # speculative tokens' proposings. `model_input_ids`, `model_positions` and
         # `model_hidden_states` represent the speculative model inputs.
@@ -1034,6 +1051,23 @@ class AscendSpecDecodeBaseProposer(SpecDecodeBaseProposer):
             if self.supports_mm_inputs:
                 self.inputs_embeds[:batch_size] = self.model.embed_input_ids(input_ids)
 
+            # When input_batch_size > batch_size (graph mode), the
+            # [batch_size:input_batch_size] tail retains stale data from
+            # a previous generate(). Zero-fill it to prevent corruption.
+            if input_batch_size > batch_size:
+                pad_s = slice(batch_size, input_batch_size)
+                self.input_ids[pad_s] = 0
+                self.hidden_states[pad_s] = 0
+                if self.supports_mm_inputs:
+                    self.inputs_embeds[pad_s] = 0
+                if self.uses_mrope:
+                    self.mrope_positions[:, pad_s] = 0
+                elif self.uses_xdrope_dim > 0 and self.draft_uses_xdrope_dim > 0:
+                    self.xdrope_positions[:, pad_s] = 0
+                else:
+                    self.positions[pad_s] = 0
+
+            if self.supports_mm_inputs:
                 input_ids = self.input_ids[:input_batch_size]
                 inputs_embeds = self.inputs_embeds[:input_batch_size]
             else:
