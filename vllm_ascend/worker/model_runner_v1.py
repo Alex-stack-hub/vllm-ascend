@@ -1977,12 +1977,13 @@ class NPUModelRunner(GPUModelRunner):
             )
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
-            if self.use_aux_hidden_state_outputs and isinstance(hidden_states, tuple):
-                if len(hidden_states) == 2:
-                    hidden_states, aux_hidden_states = hidden_states
-                elif len(hidden_states) > 2:
-                    aux_hidden_states = list(hidden_states[1:])
-                    hidden_states = hidden_states[0]
+            if self.use_aux_hidden_state_outputs:
+                from vllm_ascend.attention.aux_hs_utils import (
+                    unpack_aux_hidden_states_output,
+                )
+                hidden_states, aux_hidden_states = unpack_aux_hidden_states_output(
+                    hidden_states
+                )
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
