@@ -158,14 +158,16 @@ class ACLGraphWrapper:
                     # `output` is managed by pytorch's aclgraph pool
                     output = self.runnable(*args, **kwargs)
                     # NPU graph capture does not handle nested lists in
-                    # the output tuple.  Gemma4 + EAGLE3 returns
-                    #   (hidden_states, [aux0, aux1, aux2])
-                    # Flatten to a flat tensor tuple so every tensor is
-                    # registered as a graph output and refreshed on replay.
+                    # the output tuple, and multi-element flat tuples may
+                    # also be unreliable.  Pack (hidden_states, [aux0,...])
+                    # into (hidden_states, stacked_aux) so the graph only
+                    # sees a 2-tuple output.
                     from vllm_ascend.attention.aux_hs_utils import (
                         flatten_aux_hidden_states_output,
+                        pack_aux_for_graph,
                     )
                     output = flatten_aux_hidden_states_output(output)
+                    output = pack_aux_for_graph(output)
                     if self.aclgraph_options.weak_ref_output:
                         # by converting it to weak ref,
                         # the original `output` will immediately be released
