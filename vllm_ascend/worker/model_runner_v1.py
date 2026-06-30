@@ -1979,6 +1979,12 @@ class NPUModelRunner(GPUModelRunner):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
                 hidden_states, aux_hidden_states = hidden_states
+                # When target model is running in FULL graph mode, the
+                # aux_hidden_states tensors in the output tuple are captured
+                # at graph-build time and may not be refreshed on replay.
+                # Clone them to get fresh outputs for the Eagle proposer.
+                if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
+                    aux_hidden_states = [h.clone() for h in aux_hidden_states]
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
