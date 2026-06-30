@@ -1978,18 +1978,17 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                # In FULL graph mode, the FlatOutputWrapper flattens the
-                # model output from (hs, [aux0,aux1,aux2]) into a flat tuple
-                # (hs, aux0, aux1, aux2) so NPU graph capture correctly
-                # handles every tensor as a graph output.
-                # Detect flat tuple: 2nd element is a Tensor, not a list.
-                if (isinstance(hidden_states, tuple)
-                        and len(hidden_states) > 2
-                        and torch.is_tensor(hidden_states[1])):
-                    hidden_states, *aux_list = hidden_states
-                    aux_hidden_states = list(aux_list)
-                else:
+                if (isinstance(hidden_states, tuple) and len(hidden_states) == 2
+                        and not torch.is_tensor(hidden_states[1])):
+                    # Eager-mode output: (hidden_states, [aux0, aux1, aux2])
                     hidden_states, aux_hidden_states = hidden_states
+                elif isinstance(hidden_states, tuple) and len(hidden_states) > 2:
+                    # Graph-mode output: flat tuple (hidden_states, aux0, aux1, ...)
+                    aux_hidden_states = list(hidden_states[1:])
+                    hidden_states = hidden_states[0]
+                else:
+                    # Single-tensor output (no aux)
+                    aux_hidden_states = None
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
