@@ -3426,11 +3426,18 @@ class NPUModelRunner(GPUModelRunner):
                                 device=self.device)
                     for _ in range(num_aux)
                 ]
-                # Build layer_idx -> buffer_index map
+                # Build layer_idx -> buffer_index map from the same
+                # inner model that set_aux_hidden_state_layers wrote to.
+                # For Gemma4ForConditionalGeneration: lang_model.model
+                # For direct text models:            .model
+                _parent = self.model
+                if hasattr(_parent, 'get_language_model'):
+                    _parent = _parent.get_language_model()
+                _aux_layers = _parent.aux_hidden_state_layers \
+                    if hasattr(_parent, 'aux_hidden_state_layers') \
+                    else _parent.model.aux_hidden_state_layers
                 _aux_layer_map = {}
-                for i, layer_id in enumerate(
-                    self.model.aux_hidden_state_layers
-                ):
+                for i, layer_id in enumerate(_aux_layers):
                     _aux_layer_map[layer_id] = i
                 _aux_bufs = self._aux_output_buffers
 
