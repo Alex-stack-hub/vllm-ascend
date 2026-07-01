@@ -18,6 +18,7 @@
 #
 
 import math
+import os
 import sys
 import time
 from collections import defaultdict
@@ -1548,6 +1549,18 @@ class NPUModelRunner(GPUModelRunner):
                     target_hidden_states = hidden_states
                     if self.use_aux_hidden_state_outputs:
                         target_hidden_states = torch.cat([h for h in aux_hidden_states], dim=-1)
+                if (os.environ.get('VLLM_TRACE_AUX') == '1'
+                        and self.use_aux_hidden_state_outputs
+                        and aux_hidden_states is not None):
+                    import json as _j, torch.distributed as _d
+                    _rk = _d.get_rank() if _d.is_initialized() else -1
+                    _info = {'phase': 'propose_pcp', 'rank': _rk,
+                             'has_graph_bufs': hasattr(self, '_graph_aux_bufs')}
+                    for _i, _h in enumerate(aux_hidden_states):
+                        _info[f'aux{_i}_sum'] = float(_h.float().sum())
+                        _info[f'aux{_i}_shape'] = list(_h.shape)
+                    with open('/tmp/aux_trace.jsonl', 'a') as _tf:
+                        _tf.write(_j.dumps(_info) + '\n')
                 else:
                     token_indices_to_sample = None
                     # input_ids can be None for multimodal models.
@@ -1557,6 +1570,19 @@ class NPUModelRunner(GPUModelRunner):
                         target_hidden_states = torch.cat([h[:num_scheduled_tokens] for h in aux_hidden_states], dim=-1)
                     else:
                         target_hidden_states = hidden_states[:num_scheduled_tokens]
+                # TRACE: aux checksums (remove before merge)
+                if (os.environ.get('VLLM_TRACE_AUX') == '1'
+                        and self.use_aux_hidden_state_outputs
+                        and aux_hidden_states is not None):
+                    import json as _j, torch.distributed as _d
+                    _rk = _d.get_rank() if _d.is_initialized() else -1
+                    _info = {'phase': 'propose_draft', 'rank': _rk,
+                             'has_graph_bufs': hasattr(self, '_graph_aux_bufs')}
+                    for _i, _h in enumerate(aux_hidden_states):
+                        _info[f'aux{_i}_sum'] = float(_h.float().sum())
+                        _info[f'aux{_i}_shape'] = list(_h.shape)
+                    with open('/tmp/aux_trace.jsonl', 'a') as _tf:
+                        _tf.write(_j.dumps(_info) + '\n')
             else:
                 if self.pcp_size > 1:
                     assert common_attn_metadata is not None
@@ -1978,7 +2004,12 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                hidden_states, aux_hidden_states = hidden_states
+                if hasattr(self, '_graph_aux_bufs'):
+                    ntok = hidden_states.shape[0]
+                    aux_hidden_states = [b[:ntok].clone()
+                                         for b in self._graph_aux_bufs]
+                else:
+                    hidden_states, aux_hidden_states = hidden_states
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
@@ -3391,17 +3422,47 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
-            # EAGLE3 _maybe_add_hidden_state uses list.append() which
-            # NPU graph does not capture: on replay the aux list is empty.
-            # Skip graph wrap for the target when aux outputs are needed;
-            # the draft model's own graph path is unaffected.
-            if not self.use_aux_hidden_state_outputs:
-                self.model = ACLGraphWrapper(
-                    self.model, self.vllm_config,
-                    runtime_mode=CUDAGraphMode.FULL,
-                    use_eagle=self.use_eagle,
-                    enable_enpu=self.enable_enpu,
-                )
+
+            if self.use_aux_hidden_state_outputs:
+                # Replace list.append() with copy_() into persistent tensors
+                # so the graph captures aux writes.
+                num_aux = 3
+                max_tok = self.max_num_tokens
+                hf = self.vllm_config.model_config.hf_config
+                hs = getattr(getattr(hf, 'text_config', hf), 'hidden_size', 0)
+                self._graph_aux_bufs = [torch.zeros(max_tok, hs, dtype=self.dtype,
+                                                    device=self.device)
+                                        for _ in range(num_aux)]
+
+                _parent = self.model
+                if hasattr(_parent, 'get_language_model'):
+                    _parent = _parent.get_language_model()
+                _model = getattr(_parent, 'model', _parent)
+                _layers = _model.aux_hidden_state_layers
+                _slot_of = {lid: i for i, lid in enumerate(_layers)}
+                _bufs = self._graph_aux_bufs
+
+                def _safe_add(aux_states, lid, hs, res):
+                    if lid in _slot_of:
+                        v = (hs + res) if res is not None else hs
+                        s = _slot_of[lid]
+                        n = min(v.shape[0], _bufs[s].shape[0])
+                        _bufs[s][:n].copy_(v[:n])
+                    return aux_states
+                _model._maybe_add_hidden_state = _safe_add
+
+                _orig_fwd = self.model.forward
+                def _single_out_fwd(*a, **kw):
+                    r = _orig_fwd(*a, **kw)
+                    return r[0] if isinstance(r, tuple) else r
+                self.model.forward = _single_out_fwd
+
+            self.model = ACLGraphWrapper(
+                self.model, self.vllm_config,
+                runtime_mode=CUDAGraphMode.FULL,
+                use_eagle=self.use_eagle,
+                enable_enpu=self.enable_enpu,
+            )
 
         if self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
             self._start_dump_data()
