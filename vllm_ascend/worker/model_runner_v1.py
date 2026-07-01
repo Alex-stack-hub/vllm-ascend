@@ -1978,7 +1978,20 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                hidden_states, aux_hidden_states = hidden_states
+                if isinstance(hidden_states, tuple) and len(hidden_states) == 2:
+                    hidden_states, aux_hidden_states = hidden_states
+                    if isinstance(aux_hidden_states, torch.Tensor):
+                        num_tokens = hidden_states.shape[0]
+                        aux_hidden_states = [
+                            aux_hidden_states[i, :num_tokens].clone()
+                            for i in range(aux_hidden_states.shape[0])
+                        ]
+                else:
+                    raise RuntimeError(
+                        "Expected target model to return "
+                        "(hidden_states, aux_hidden_states) when EAGLE3 "
+                        "aux hidden state outputs are enabled."
+                    )
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
@@ -3391,20 +3404,94 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
-            # EAGLE3 _maybe_add_hidden_state uses list.append() which
-            # NPU graph does not capture: on replay the aux list is empty.
-            # Skip graph wrap for the target when aux outputs are needed;
-            # the draft model's own graph path is unaffected.
-            if not self.use_aux_hidden_state_outputs:
+            use_target_graph = True
+            if self.use_aux_hidden_state_outputs:
+                use_target_graph = self._enable_graph_safe_eagle3_aux_outputs()
+            if use_target_graph:
                 self.model = ACLGraphWrapper(
                     self.model, self.vllm_config,
                     runtime_mode=CUDAGraphMode.FULL,
                     use_eagle=self.use_eagle,
                     enable_enpu=self.enable_enpu,
                 )
+            else:
+                logger.warning(
+                    "EAGLE3 aux hidden states are active, but graph-safe "
+                    "aux output setup failed. Target model will run in "
+                    "eager mode; draft graph mode is unaffected."
+                )
 
         if self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
             self._start_dump_data()
+
+    def _enable_graph_safe_eagle3_aux_outputs(self) -> bool:
+        """Make target aux hidden state collection capturable by NPU graph.
+
+        EagleModelMixin collects aux hidden states with Python list.append().
+        NPU graph replay does not re-run that Python side effect, so the aux
+        list is empty on replay. Replace the collector on the inner language
+        model with tensor copy_ into a persistent stacked buffer, then make the
+        public model forward return (hidden_states, stacked_aux).
+        """
+        target = self.model
+        parent = target
+        if hasattr(parent, "get_language_model"):
+            parent = parent.get_language_model()
+        elif hasattr(parent, "language_model"):
+            parent = parent.language_model
+
+        inner_model = getattr(parent, "model", None)
+        if inner_model is None or not hasattr(inner_model, "_maybe_add_hidden_state"):
+            return False
+
+        aux_layers = tuple(getattr(inner_model, "aux_hidden_state_layers", ()))
+        if not aux_layers:
+            return False
+
+        hf_config = self.vllm_config.model_config.hf_config
+        text_config = getattr(hf_config, "text_config", hf_config)
+        hidden_size = getattr(text_config, "hidden_size", None)
+        if hidden_size is None:
+            return False
+
+        aux_layer_map = {layer_id: i for i, layer_id in enumerate(aux_layers)}
+        max_aux_tokens = self.max_num_tokens
+        if hasattr(self, "input_ids") and hasattr(self.input_ids, "gpu"):
+            max_aux_tokens = max(max_aux_tokens, self.input_ids.gpu.shape[0])
+        aux_stack = torch.empty(
+            (len(aux_layers), max_aux_tokens, hidden_size),
+            dtype=self.dtype,
+            device=self.device,
+        )
+        inner_model._graph_safe_aux_hidden_states = aux_stack
+
+        def graph_safe_maybe_add(aux_hidden_states, layer_idx, hidden_states, residual):
+            if layer_idx in aux_layer_map:
+                value = hidden_states + residual if residual is not None else hidden_states
+                buf_idx = aux_layer_map[layer_idx]
+                num_tokens = min(value.shape[0], aux_stack.shape[1])
+                aux_stack[buf_idx, :num_tokens].copy_(value[:num_tokens])
+            return aux_hidden_states
+
+        inner_model._maybe_add_hidden_state = graph_safe_maybe_add
+
+        raw_forward = target.forward
+
+        def graph_safe_forward(*args, **kwargs):
+            result = raw_forward(*args, **kwargs)
+            if isinstance(result, tuple):
+                hidden_states = result[0]
+            else:
+                hidden_states = result
+            return hidden_states, aux_stack
+
+        target.forward = graph_safe_forward
+        logger.info(
+            "Enabled graph-safe EAGLE3 aux hidden state outputs for target "
+            "graph capture with aux layers %s.",
+            aux_layers,
+        )
+        return True
 
     def _start_dump_data(self) -> None:
         if self.debugger is None or self._debugger_started:
