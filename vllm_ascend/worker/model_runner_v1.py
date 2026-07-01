@@ -3391,26 +3391,16 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
-            # EAGLE3 requires aux hidden states from the target model.
-            # _maybe_add_hidden_state uses Python list.append() which is
-            # NOT captured by torch.npu.graph — on replay the aux list
-            # is empty, causing garbled output.  Skip graph wrap for the
-            # target model when EAGLE3 aux outputs are needed.
-            # The draft model can still use graph independently.
+            # EAGLE3 _maybe_add_hidden_state uses list.append() which
+            # NPU graph does not capture: on replay the aux list is empty.
+            # Skip graph wrap for the target when aux outputs are needed;
+            # the draft model's own graph path is unaffected.
             if not self.use_aux_hidden_state_outputs:
                 self.model = ACLGraphWrapper(
-                    self.model,
-                    self.vllm_config,
+                    self.model, self.vllm_config,
                     runtime_mode=CUDAGraphMode.FULL,
                     use_eagle=self.use_eagle,
                     enable_enpu=self.enable_enpu,
-                )
-            else:
-                logger.info(
-                    "EAGLE3 aux hidden states active: target model will "
-                    "run in eager mode (NPU graph does not capture "
-                    "list.append() in _maybe_add_hidden_state). "
-                    "Draft model graph mode is unaffected."
                 )
 
         if self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
