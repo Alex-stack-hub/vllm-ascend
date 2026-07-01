@@ -1,60 +1,50 @@
-# Gemma 4 31B + EAGLE3 Ascend 适配状态（供 Codex Review）
+# Gemma 4 31B + EAGLE3 Ascend 适配状态
 
-**分支**: `gemma4-eagle3` | **HEAD**: `7fccd8f6`
-**日期**: 2026-06-30 | **vLLM 版本**: v0.20.2
+**分支**: `gemma4-eagle3` | **日期**: 2026-07-01 | **vLLM 版本**: v0.20.2
 
 ---
 
-## 当前代码改动
+## 改动
 
-### 1. Gemma4 image_token_id 映射 (e32d814d)
-`llm_base_proposer.py` +2行: `image_token_id` -> `image_token_index`
-
-### 2. ACL graph nested output flatten (524fa0df, 7fccd8f6)
-**根因**: NPU graph capture (`torch.npu.graph`) 不处理嵌套输出。
-Gemma4 返回 `(hidden_states, [aux0, aux1, aux2])` 时，list 元素不被 NPU graph 注册为输出，replay 后为 stale 值。
-
-**修复**:
-- `acl_graph.py`: capture 时 flatten `(hs, [aux0,aux1,aux2])` -> `(hs, aux0, aux1, aux2)`
-- `model_runner_v1.py`: 解包兼容 `len==2` (eager) 和 `len>2` (graph flat)
-- `utils.py`: `weak_ref_tensors` 递归 list/tuple
-
-### 3. Draft graph padding tail zero-fill (08c764b5, 8d135b58)
-防御性补丁，单独未能修复 graph 乱码。
+| Commit | 内容 |
+|--------|------|
+| `e32d814d` | `llm_base_proposer.py` +2: Gemma4 `image_token_id` 映射 |
+| `22cdff9e` | `model_runner_v1.py`: EAGLE3 aux 时 target 跳过图模式 |
 
 ---
 
 ## 验证矩阵
 
-| 配置 | commit | 状态 | 备注 |
-|------|--------|------|------|
-| Target eager | e32d814d | ✅ | |
-| Target graph | e32d814d | ✅ | |
-| EAGLE3 eager | e32d814d | ✅ | greedy token 100% 一致 |
-| EAGLE3 graph (T-graph + D-eager) | 7fccd8f6 | 🔄 待验证 | 需 NPU 环境 |
+| 配置 | 状态 |
+|------|------|
+| Target eager | ✅ PASS |
+| Target graph | ✅ PASS |
+| EAGLE3 eager | ✅ PASS |
+| EAGLE3 (target eager + draft graph) | ✅ PASS |
+| EAGLE3 (target graph + draft eager) | ❌ aux 全零 |
 
----
+## 真实 target graph 根因
 
-## 待验证命令
+`EagleModelMixin._maybe_add_hidden_state` 使用 `list.append()` — **NPU graph 不捕获 Python list 操作**。
 
-```bash
-export ASCEND_RT_VISIBLE_DEVICES=4,5,6,7
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
+### 实验性尝试（均失败）
 
-# EAGLE3 graph (target FULL_DECODE_ONLY + draft eager)
-python3 -c "
-from vllm import LLM,SamplingParams
-from transformers import AutoTokenizer
-t=AutoTokenizer.from_pretrained('/home/xty/gemma4/31B')
-p=t.apply_chat_template([{'role':'user','content':'Explain AI briefly.'}],tokenize=False,add_generation_prompt=True)
-llm=LLM(model='/home/xty/gemma4/31B',tensor_parallel_size=4,max_model_len=512,gpu_memory_utilization=0.6,max_num_seqs=1,
-        compilation_config={'cudagraph_mode':'FULL_DECODE_ONLY','cudagraph_capture_sizes':[4]},
-        speculative_config={'method':'eagle3','model':'/home/xty/eagle3/gemma-4-31b-it-eagle3','num_speculative_tokens':3,'draft_tensor_parallel_size':1,'enforce_eager':True})
-sp=SamplingParams(temperature=0,max_tokens=32)
-out=llm.generate([p],sp)
-expected=[3834,1061,33055,236764,5213,118870,28243,568,12553,62902,563,506,5596,529,496,5194,653,5464,531,62611,3246,14020,531,2121,9395,532,8974,4078,236761,108,40725,529]
-print(f'MATCH:{\"PASS\" if out[0].outputs[0].token_ids==expected else \"FAIL\"}')
-print(f'TEXT:{out[0].outputs[0].text[:80]!r}')
-del llm
-"
+| 方法 | 现象 |
+|------|------|
+| `copy_()` 写入预分配 buffer | graph 捕获写入的是 dummy_run 时的零值，replay 无法更新 |
+| `torch.stack()` + 返回 `(hs, stacked_aux)` | 同上，stacked_aux 保持零值 |
+| flatten 多元素 tuple | dump_run 期间 aux list 始终为空 |
+| clone() | 图不捕获 |
+
+### Trace 证据
+
 ```
+EAGER aux sums: [511.61, 4723.8, 1002.63]  (fresh every step)
+GRAPH aux sums: [0.0, 0.0, 0.0]             (stale from dummy_run)
+```
+
+**结论**: `torch.npu.graph` 将 `copy_()` 视为值复制（捕获写入的值），不视为操作调用。replay 时写入捕获时的原值（零），而非实时计算结果。
+
+### 目前方案
+
+EAGLE3 aux 激活时 target 使用 eager（与 Qwen3 EAGLE3 一致，`enforce_eager` 在 speculative config 中）。Draft 可使用图模式。真正的 target graph 需要 NPU graph 层面的 API 支持。
