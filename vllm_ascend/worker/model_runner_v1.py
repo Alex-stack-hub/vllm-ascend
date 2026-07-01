@@ -1978,18 +1978,7 @@ class NPUModelRunner(GPUModelRunner):
         with record_function_or_nullcontext("post process"):
             aux_hidden_states = None
             if self.use_aux_hidden_state_outputs:
-                if isinstance(hidden_states, tuple) and len(hidden_states) == 2:
-                    hs, aux_raw = hidden_states
-                    if isinstance(aux_raw, torch.Tensor) and aux_raw.dim() == 3:
-                        # Graph stacked format: unstack 3D → list
-                        hidden_states = hs
-                        ntok = hs.shape[0]
-                        aux_hidden_states = [aux_raw[i, :ntok].clone() for i in range(aux_raw.shape[0])]
-                    elif isinstance(aux_raw, (list, tuple)):
-                        # Eager nested format
-                        hidden_states, aux_hidden_states = hs, list(aux_raw)
-                    else:
-                        hidden_states, aux_hidden_states = hs, None
+                hidden_states, aux_hidden_states = hidden_states
             if self.pcp_size > 1:
                 # NOTE we must `slice` hidden_states because pcp_allgather_restore_idx
                 # ignores the padding from CUDA Graph.
@@ -3402,85 +3391,27 @@ class NPUModelRunner(GPUModelRunner):
         # wrap the model with full graph wrapper if needed.
         if self.compilation_config.cudagraph_mode.has_full_cudagraphs():
             self.update_stream: torch.npu.Stream = torch.npu.Stream()
-            # When EAGLE3 aux hidden states are active and the model returns
-            # (hidden_states, [aux0, aux1, aux2]), NPU graph capture does not
-            # correctly handle multi-element or nested outputs — the aux
-            # tensors are stale on replay.  Wrap the model so only a single
-            # tensor (hidden_states) is the graph output; aux tensors are
-            # written to pre-allocated persistent buffers via in-place copy
-            # which the graph does capture correctly.
-            if self.use_aux_hidden_state_outputs:
-                # _maybe_add_hidden_state uses Python list.append() which is
-                # NOT captured by torch.npu.graph — on replay the aux list is
-                # always empty.  Replace with pre-allocated tensor buffers
-                # using a layer→index map (deterministic since aux layers are
-                # known at load time: [2, 30, 57]).
-                num_aux = 3
-                max_tokens = self.max_num_tokens
-                _hf_config = self.vllm_config.model_config.hf_config
-                hidden_size = getattr(
-                    getattr(_hf_config, 'text_config', _hf_config),
-                    'hidden_size'
+            # EAGLE3 requires aux hidden states from the target model.
+            # _maybe_add_hidden_state uses Python list.append() which is
+            # NOT captured by torch.npu.graph — on replay the aux list
+            # is empty, causing garbled output.  Skip graph wrap for the
+            # target model when EAGLE3 aux outputs are needed.
+            # The draft model can still use graph independently.
+            if not self.use_aux_hidden_state_outputs:
+                self.model = ACLGraphWrapper(
+                    self.model,
+                    self.vllm_config,
+                    runtime_mode=CUDAGraphMode.FULL,
+                    use_eagle=self.use_eagle,
+                    enable_enpu=self.enable_enpu,
                 )
-                self._aux_output_buffers = [
-                    torch.zeros(max_tokens, hidden_size, dtype=self.dtype,
-                                device=self.device)
-                    for _ in range(num_aux)
-                ]
-                # Build layer_idx -> buffer_index map from the same
-                # inner model that set_aux_hidden_state_layers wrote to.
-                # For Gemma4ForConditionalGeneration: lang_model.model
-                # For direct text models:            .model
-                _parent = self.model
-                if hasattr(_parent, 'get_language_model'):
-                    _parent = _parent.get_language_model()
-                _aux_layers = _parent.aux_hidden_state_layers \
-                    if hasattr(_parent, 'aux_hidden_state_layers') \
-                    else _parent.model.aux_hidden_state_layers
-                _aux_layer_map = {}
-                for i, layer_id in enumerate(_aux_layers):
-                    _aux_layer_map[layer_id] = i
-                _aux_bufs = self._aux_output_buffers
-
-                # Replace the model's _maybe_add_hidden_state so that aux
-                # tensors are written to pre-allocated tensor buffers via
-                # copy_() instead of list.append().  The copied tensors are
-                # then stacked into a single (3, N, H) tensor and the model
-                # forward returns (hidden_states, stacked_aux) — a 2-tuple
-                # that NPU graph can handle.
-                # Stack the aux into one 3D tensor for reliable 2-tuple output
-                _aux_buf_stack = torch.stack(_aux_bufs, dim=0)
-                del self._aux_output_buffers
-
-                def _graph_safe_maybe_add(aux_hidden_states, layer_idx,
-                                           hidden_states, residual):
-                    if layer_idx in _aux_layer_map:
-                        value = (hidden_states + residual
-                                 if residual is not None else hidden_states)
-                        buf_idx = _aux_layer_map[layer_idx]
-                        n = min(value.shape[0], _aux_buf_stack.shape[1])
-                        _aux_buf_stack[buf_idx, :n].copy_(value[:n])
-                    return aux_hidden_states
-
-                self.model._maybe_add_hidden_state = _graph_safe_maybe_add
-
-                _raw_forward = self.model.forward
-                _stack = _aux_buf_stack
-                def _graph_output_forward(*args, **kwargs):
-                    result = _raw_forward(*args, **kwargs)
-                    if isinstance(result, tuple):
-                        hs = result[0]
-                        return (hs, _stack)
-                    return result
-                self.model.forward = _graph_output_forward
-
-            self.model = ACLGraphWrapper(
-                self.model,
-                self.vllm_config,
-                runtime_mode=CUDAGraphMode.FULL,
-                use_eagle=self.use_eagle,
-                enable_enpu=self.enable_enpu,
-            )
+            else:
+                logger.info(
+                    "EAGLE3 aux hidden states active: target model will "
+                    "run in eager mode (NPU graph does not capture "
+                    "list.append() in _maybe_add_hidden_state). "
+                    "Draft model graph mode is unaffected."
+                )
 
         if self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
             self._start_dump_data()
