@@ -87,7 +87,27 @@ flowchart LR
 - Eager 用于对照 Graph Capture/Replay；
 - ALLGATHER 用于对照 MC2/ALLTOALL。
 
-## 5. 详细文档
+## 5. 相关 PR
+
+下面的 PR 共同构成了 Gemma4 在 vLLM Ascend 上的适配过程。早期 PR 用于理解模型和问题，后续 PR 按当前主干接口逐步完成设备、Graph、量化、KV Sharing 和精度看护。
+
+| PR | 主要内容 | 与本适配的关系 |
+|---|---|---|
+| [#9222](https://github.com/vllm-project/vllm-ascend/pull/9222) | 早期 Gemma4 支持方案 | 提供 Attention、MoE、RoPE、Runner 和 KV Sharing 的分析参考；未整体照搬旧实现 |
+| [#10643](https://github.com/vllm-project/vllm-ascend/pull/10643) | A5 Gemma4 Graph 支持 | 引入 Layer-Aware Replay、FIA 最大 Workspace 和 GELU 相关适配 |
+| [#11091](https://github.com/vllm-project/vllm-ascend/pull/11091) | A2/A3 512-Head 支持 | Global Decode 使用 PA，Prefill 使用 Large-Head Fallback，并将设备差异放入 DeviceAdaptor |
+| [#11399](https://github.com/vllm-project/vllm-ascend/pull/11399) | Gemma4 MTP 适配 | 涉及 Proposer、Draft/Target KV、Q-Only RoPE 和 Speculative Graph |
+| [#11536](https://github.com/vllm-project/vllm-ascend/pull/11536) | A2/A3 Mixed PA/FIA Graph | 使用显式 PA Graph Param，解决 9/21 参数错配，并处理 Large-Head RoPE UB |
+| [#11575](https://github.com/vllm-project/vllm-ascend/pull/11575) | Gemma4 量化适配 | 处理 ModelSlim 权重映射和 Gemma4 量化结构差异 |
+| [#11732](https://github.com/vllm-project/vllm-ascend/pull/11732) | Gemma4 MoE 量化补充 | 处理 Expert 路径、激活函数和量化 MoE 执行 |
+| [#11791](https://github.com/vllm-project/vllm-ascend/pull/11791) | E2B/E4B KV Sharing | 保证 Target Layer 读取 Producer KV，同时跳过 Cache Write |
+| [#12228](https://github.com/vllm-project/vllm-ascend/pull/12228) | 恢复 PA 相关能力 | 保证 A2/A3 512-Head Decode Fallback 路径仍然可达 |
+| [#12391](https://github.com/vllm-project/vllm-ascend/pull/12391) | Gemma4 MoE PR E2E | 增加 A3 双卡、TP2+EP、FULL_DECODE_ONLY 的启动与短生成看护 |
+| [#12605](https://github.com/vllm-project/vllm-ascend/pull/12605) | FIA Decode Mask 精度恢复 | 恢复回归前的 Mask/Sparse-Mode 语义，使 A2 MoE GPQA-D 和重复率恢复 |
+
+阅读这些 PR 时需要结合它们所基于的主干版本。接口、DeviceAdaptor 和 Graph Param 在适配过程中持续演进，早期代码更适合用于理解问题，最终实现应以当前主干为准。
+
+## 6. 详细文档
 
 建议首次阅读时按顺序进行：
 
@@ -113,9 +133,9 @@ flowchart LR
 | W8A8 能启动但精度异常 | 04 的 GELU-TANH 与专家路径 |
 | MTP 是否有性能收益 | 05 的 MTP 收益分析 |
 
-## 6. 当前适配结果
+## 7. 当前适配结果
 
-### 6.1 支持情况
+### 7.1 支持情况
 
 | 能力 | 31B Dense | 26B-A4B MoE | E2B | E4B |
 |---|---|---|---|---|
@@ -127,7 +147,7 @@ flowchart LR
 | MTP | 已有阶段性实现和 acceptance 数据 | 已有阶段性实现和 acceptance 数据 | 待专项验证 | 待专项验证 |
 | Nightly GPQA-D | 已覆盖 | 已覆盖 | 尚未建立同等级基线 | 尚未建立同等级基线 |
 
-### 6.2 关键精度结果
+### 7.2 关键精度结果
 
 | 场景 | 问题结果 | 修复或控制组 | 说明 |
 |---|---:|---:|---|
@@ -137,7 +157,7 @@ flowchart LR
 
 ![Gemma4 精度恢复](assets/accuracy_recovery.png)
 
-### 6.3 关键性能结果
+### 7.3 关键性能结果
 
 以下数据来自 Ascend 910B3、vLLM 0.23.0、TP1、PIECEWISE 和对应 W8A8 checkpoint：
 
@@ -150,7 +170,7 @@ flowchart LR
 
 这些结果只能在对应设备、权重、并行和 workload 下比较，不能简单外推到其他设备或高并发 EP 场景。
 
-## 7. 设计原则与当前边界
+## 8. 设计原则与当前边界
 
 本次适配沉淀了以下原则：
 
