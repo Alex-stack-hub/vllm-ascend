@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <rect width="1400" height="760" fill="#f7f9fc"/>
+  <text x="70" y="70" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#172033">Gemma4 Prefix Cache TTFT</text>
+  <text x="70" y="108" font-family="Arial, sans-serif" font-size="18" fill="#5f6b7a">Shared-prefix workload on Ascend 910B3; lower TTFT is better</text>
+  <line x1="120" y1="620" x2="1320" y2="620" stroke="#9aa5b1" stroke-width="2"/>
+  <line x1="120" y1="160" x2="120" y2="620" stroke="#9aa5b1" stroke-width="2"/>
+  <g stroke="#d8dee8" stroke-width="1">
+    <line x1="120" y1="543.3" x2="1320" y2="543.3"/>
+    <line x1="120" y1="466.7" x2="1320" y2="466.7"/>
+    <line x1="120" y1="390" x2="1320" y2="390"/>
+    <line x1="120" y1="313.3" x2="1320" y2="313.3"/>
+    <line x1="120" y1="236.7" x2="1320" y2="236.7"/>
+    <line x1="120" y1="160" x2="1320" y2="160"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="16" fill="#5f6b7a">
+    <text x="78" y="625">0.0 s</text>
+    <text x="78" y="548">0.5 s</text>
+    <text x="78" y="472">1.0 s</text>
+    <text x="78" y="395">1.5 s</text>
+    <text x="78" y="318">2.0 s</text>
+    <text x="78" y="242">2.5 s</text>
+    <text x="78" y="165">3.0 s</text>
+  </g>
+
+  <rect x="245" y="273.47" width="150" height="346.53" rx="4" fill="#d94f4f"/>
+  <rect x="430" y="319.47" width="150" height="300.53" rx="4" fill="#2f9d68"/>
+  <rect x="795" y="255.07" width="150" height="364.93" rx="4" fill="#d94f4f"/>
+  <rect x="980" y="293.47" width="150" height="326.53" rx="4" fill="#2f9d68"/>
+  <g font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle">
+    <text x="320" y="259" fill="#d94f4f">2.26 s</text>
+    <text x="505" y="305" fill="#2f9d68">1.96 s</text>
+    <text x="870" y="241" fill="#d94f4f">2.38 s</text>
+    <text x="1055" y="279" fill="#2f9d68">2.13 s</text>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="17" fill="#384454" text-anchor="middle">
+    <text x="320" y="652">Random prefix</text>
+    <text x="505" y="652">Shared prefix</text>
+    <text x="870" y="652">Random prefix</text>
+    <text x="1055" y="652">Shared prefix</text>
+  </g>
+  <text x="412" y="710" font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle" fill="#172033">31B: -13.2%, hit 86.5%</text>
+  <text x="962" y="710" font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle" fill="#172033">26B MoE: -10.4%, hit 86.4%</text>
+  <line x1="690" y1="175" x2="690" y2="700" stroke="#d8dee8" stroke-width="2" stroke-dasharray="8 8"/>
+</svg>

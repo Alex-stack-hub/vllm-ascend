@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <rect width="1400" height="760" fill="#f7f9fc"/>
+  <text x="70" y="70" font-family="Arial, sans-serif" font-size="34" font-weight="700" fill="#172033">Gemma4 W8A8 TP1 PIECEWISE Baseline</text>
+  <text x="70" y="108" font-family="Arial, sans-serif" font-size="18" fill="#5f6b7a">Ascend 910B3, vLLM 0.23.0, vLLM Ascend a83b055e; lower TPOT is better</text>
+  <line x1="120" y1="620" x2="1320" y2="620" stroke="#9aa5b1" stroke-width="2"/>
+  <line x1="120" y1="160" x2="120" y2="620" stroke="#9aa5b1" stroke-width="2"/>
+  <g stroke="#d8dee8" stroke-width="1">
+    <line x1="120" y1="528" x2="1320" y2="528"/>
+    <line x1="120" y1="436" x2="1320" y2="436"/>
+    <line x1="120" y1="344" x2="1320" y2="344"/>
+    <line x1="120" y1="252" x2="1320" y2="252"/>
+    <line x1="120" y1="160" x2="1320" y2="160"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="16" fill="#5f6b7a">
+    <text x="75" y="625">0 ms</text>
+    <text x="65" y="533">10 ms</text>
+    <text x="65" y="441">20 ms</text>
+    <text x="65" y="349">30 ms</text>
+    <text x="65" y="257">40 ms</text>
+    <text x="65" y="165">50 ms</text>
+  </g>
+
+  <rect x="235" y="278.68" width="150" height="341.32" rx="4" fill="#3976d4"/>
+  <rect x="420" y="288.80" width="150" height="331.20" rx="4" fill="#73a5e8"/>
+  <rect x="790" y="415.76" width="150" height="204.24" rx="4" fill="#2f9d68"/>
+  <rect x="975" y="409.32" width="150" height="210.68" rx="4" fill="#65bb8f"/>
+
+  <g font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle">
+    <text x="310" y="264" fill="#3976d4">37.1 ms</text>
+    <text x="495" y="274" fill="#3976d4">36.0 ms</text>
+    <text x="865" y="401" fill="#2f9d68">22.2 ms</text>
+    <text x="1050" y="395" fill="#2f9d68">22.9 ms</text>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="17" fill="#384454" text-anchor="middle">
+    <text x="310" y="652">Text 4096→1536</text>
+    <text x="495" y="652">Image 297→256</text>
+    <text x="865" y="652">Text 4096→1536</text>
+    <text x="1050" y="652">Image 297→256</text>
+  </g>
+  <text x="403" y="710" font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle" fill="#172033">31B Dense W8A8</text>
+  <text x="958" y="710" font-family="Arial, sans-serif" font-size="23" font-weight="700" text-anchor="middle" fill="#172033">26B MoE Experts W8A8</text>
+  <line x1="690" y1="175" x2="690" y2="700" stroke="#d8dee8" stroke-width="2" stroke-dasharray="8 8"/>
+</svg>
