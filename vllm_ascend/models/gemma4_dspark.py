@@ -34,6 +34,9 @@ class AscendGemma4DSparkModel(Gemma4DSparkModel):
             return
 
         self._context_k_proj_wrappers = wrappers
+        self._fused_context_k_weight = None
+        self._fused_context_k_scale = None
+        self._fused_context_k_bias = None
         self._hidden_norm_weight = self.hidden_norm.weight.data
         self._k_norm_weights = torch.stack([attn.k_norm.weight.data for attn in layers_attn], dim=0).contiguous()
         self._v_norm_weights = torch.ones(
@@ -41,6 +44,27 @@ class AscendGemma4DSparkModel(Gemma4DSparkModel):
             layers_attn[0].head_dim,
             dtype=self._k_norm_weights.dtype,
             device=self._k_norm_weights.device,
+        )
+
+    def prepare_fused_context_k_projection(self) -> None:
+        """Fuse processed MXFP8 K projections into one wide QMM.
+
+        MXFP8 processing transposes each weight to [K, N] and each E8M0
+        scale to [K/2, N, 2]. Concatenating N keeps the microscaling groups
+        intact and turns one QMM per draft layer into one wider QMM.
+        """
+        wrappers = getattr(self, "_context_k_proj_wrappers", None)
+        if not wrappers:
+            return
+        if not all(getattr(wrapper.linear, "_mxfp8_transformed", False) for wrapper in wrappers):
+            return
+        weights = [wrapper.weight for wrapper in wrappers]
+        scales = [wrapper.linear.weight_scale for wrapper in wrappers]
+        self._fused_context_k_weight = torch.cat(weights, dim=1).contiguous()
+        self._fused_context_k_scale = torch.cat(scales, dim=1).contiguous()
+        biases = [wrapper.bias for wrapper in wrappers]
+        self._fused_context_k_bias = (
+            torch.cat(biases, dim=0).contiguous() if all(bias is not None for bias in biases) else None
         )
 
     def _project_context_kv(
@@ -58,10 +82,20 @@ class AscendGemma4DSparkModel(Gemma4DSparkModel):
         normed = torch.empty_like(context_states)
         ops.rms_norm(normed, context_states, self._hidden_norm_weight, self._rms_norm_eps)
         quantized, scale = wrappers[0].quantize(normed)
-        all_k = torch.stack(
-            [wrapper.matmul(quantized, scale, wrapper.bias) for wrapper in wrappers],
-            dim=0,
-        ).view(num_layers, num_ctx, num_kv_heads, head_dim)
+        if self._fused_context_k_weight is not None:
+            all_k_flat = wrappers[0].matmul_mxfp8(
+                quantized,
+                scale,
+                self._fused_context_k_weight,
+                self._fused_context_k_scale,
+                self._fused_context_k_bias,
+            )
+            all_k = all_k_flat.view(num_ctx, num_layers, num_kv_heads, head_dim).permute(1, 0, 2, 3).contiguous()
+        else:
+            all_k = torch.stack(
+                [wrapper.matmul(quantized, scale, wrapper.bias) for wrapper in wrappers],
+                dim=0,
+            ).view(num_layers, num_ctx, num_kv_heads, head_dim)
         all_v = torch.empty_like(all_k)
         ops.rms_norm(all_v, all_k, self._v_norm_weights, self._rms_norm_eps)
         return all_k, all_v
@@ -101,3 +135,4 @@ class AscendGemma4DSparkForCausalLM(Gemma4DSparkForCausalLM):
 
     def post_process(self, vllm_config: VllmConfig) -> None:
         align_draft_weights(self, self.model.fc, vllm_config)
+        self.model.prepare_fused_context_k_projection()

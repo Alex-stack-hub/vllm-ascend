@@ -214,6 +214,14 @@ increase. Calculate `1 + accepted_tokens / drafts` as the mean acceptance
 length and compare output tokens per second against the same target command
 without `--speculative-config`.
 
+For a controlled A5 ablation, use `benchmarks/gemma4_a5/launch.sh` to compare
+BF16 eager, MXFP eager, DSpark eager, DSpark graph, and DSpark adaptive modes.
+Use `benchmarks/gemma4_a5/benchmark.py` for fixed-token streaming workloads and
+`benchmarks/gemma4_a5/theory.py` for architecture-derived upper bounds. The
+theory report keeps quantization, speculative decoding, graph replay, KV
+bandwidth, and communication overlap separate because they share bottlenecks
+and cannot be multiplied into an end-to-end speedup claim.
+
 Common Issues Tip: If the service fails to start, HBM is insufficient, or requests are not scheduled as expected, refer to [Public FAQs](../../faqs.md) first, and then check the model-specific FAQ in Section 10.
 
 #### Key Parameters

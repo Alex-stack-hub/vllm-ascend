@@ -154,22 +154,40 @@ class CVLinearWrapper:
             return output
 
         if self._is_mxfp8_dynamic:
-            # Mirrors the pre-quantized path of the MXFP8 scheme's apply()
-            if bias is not None and bias.dtype != torch.float32:
-                bias = bias.to(torch.float32)
-            return torch_npu.npu_quant_matmul(
+            return self.matmul_mxfp8(
                 quantized_x,
+                pertoken_scale,
                 self.linear.weight,
                 self.linear.weight_scale,
-                scale_dtype=torch_npu.float8_e8m0fnu,
-                pertoken_scale=pertoken_scale,
-                pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
-                bias=bias,
-                output_dtype=torch.bfloat16,
-                group_sizes=[1, 1, self._mxfp8_quant_method.group_size],
+                bias,
             )
 
         return self.linear.quant_method.apply(self.linear, quantized_x, bias)
+
+    def matmul_mxfp8(
+        self,
+        quantized_x: torch.Tensor,
+        pertoken_scale: torch.Tensor,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Run MXFP8 QMM with caller-provided packed weight buffers."""
+        if not self.supports_mxfp8_split:
+            raise RuntimeError("matmul_mxfp8 requires a communication-free MXFP8 linear")
+        if bias is not None and bias.dtype != torch.float32:
+            bias = bias.to(torch.float32)
+        return torch_npu.npu_quant_matmul(
+            quantized_x,
+            weight,
+            weight_scale,
+            scale_dtype=torch_npu.float8_e8m0fnu,
+            pertoken_scale=pertoken_scale,
+            pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
+            bias=bias,
+            output_dtype=torch.bfloat16,
+            group_sizes=[1, 1, self._mxfp8_quant_method.group_size],
+        )
 
     def forward(self, x: torch.Tensor, bias=None):
         """Full forward (equivalent to the original Linear.forward)"""

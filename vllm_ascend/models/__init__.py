@@ -3,6 +3,10 @@ from vllm import ModelRegistry
 
 def register_model():
     ModelRegistry.register_model(
+        "Gemma4ForCausalLM",
+        "vllm_ascend.models.gemma4:AscendGemma4ForCausalLM",
+    )
+    ModelRegistry.register_model(
         "Gemma4ForConditionalGeneration",
         "vllm_ascend.models.gemma4_mm:AscendGemma4ForConditionalGeneration",
     )
