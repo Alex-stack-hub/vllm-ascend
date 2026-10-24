@@ -241,9 +241,10 @@ def select_mega_moe_activation_kwargs(
                 "The installed CANN MegaMoe wrapper does not expose GELU activation selection. "
                 "Install a compatible cann_ops_transformer build or disable fused MC2."
             )
-        # Gemma 4 calls the tanh approximation ``gelu_tanh``. The A5
-        # MegaMoe ABI calls the same elementwise activation ``gelu``.
-        return {"activation": "gelu", "activation_params": {}}
+        # Keep Gemma 4's gated tanh-GELU distinct from elementwise GELU. The
+        # former consumes [gate, up] and halves the first projection width.
+        activation_name = "gelu_tanh" if activation_name == "gelu_tanh" else "gelu"
+        return {"activation": activation_name, "activation_params": {}}
     if {"activation", "activation_params"}.issubset(parameter_names):
         kwargs.update(
             activation="swigluoai",

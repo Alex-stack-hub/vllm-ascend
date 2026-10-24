@@ -882,6 +882,37 @@ class TestAscendConfig(TestBase):
         self.assertTrue(second_ascend_config.ascend_compilation_config.enable_npugraph_ex)
 
 
+class TestGemma4MegaMoeConfig(TestBase):
+    @staticmethod
+    def _config(model_type: str = "gemma4_text", hidden_size: int = 2816, moe_intermediate_size: int = 704):
+        return SimpleNamespace(
+            model_config=SimpleNamespace(
+                architectures=["Gemma4ForCausalLM"],
+                hf_text_config=SimpleNamespace(
+                    model_type=model_type,
+                    hidden_size=hidden_size,
+                    moe_intermediate_size=moe_intermediate_size,
+                    num_experts_per_tok=8,
+                ),
+                get_num_experts=lambda: 128,
+            ),
+            parallel_config=SimpleNamespace(
+                world_size_across_dp=8,
+                pipeline_parallel_size=1,
+            ),
+        )
+
+    def test_a5_megamoe_accepts_gemma4_a4b_shape(self):
+        assert AscendConfig._is_a5_megamoe_supported_by_config(self._config())
+
+    def test_a5_megamoe_does_not_widen_other_model_shapes(self):
+        assert not AscendConfig._is_a5_megamoe_supported_by_config(self._config(model_type="other_moe"))
+
+    def test_a5_megamoe_rejects_unvalidated_gemma4_shape(self):
+        assert not AscendConfig._is_a5_megamoe_supported_by_config(self._config(hidden_size=2880))
+        assert not AscendConfig._is_a5_megamoe_supported_by_config(self._config(moe_intermediate_size=768))
+
+
 class TestShortRequestFirstConfig(TestBase):
     def test_default_is_disabled(self):
         cfg = ShortRequestFirstConfig()

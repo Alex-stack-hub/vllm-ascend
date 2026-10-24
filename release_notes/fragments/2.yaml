@@ -1,6 +1,6 @@
 pr: 2
 entries:
   - category: performance
-    text: Added Ascend runtime support for Gemma 4 DSpark draft models and MegaMoe tanh-GELU activation selection.
+    text: Added A5 Gemma 4 DSpark MXFP inference, including shared MXFP8 context projection and MegaMoe gated tanh-GELU support for the 26B-A4B target.
     model: Gemma-4
     hardware: [A5]

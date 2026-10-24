@@ -205,8 +205,9 @@ class TestMegaMoeActivationKwargs(unittest.TestCase):
             swiglu_alpha=1.702,
             swiglu_beta=1.0,
         )
-        self.assertEqual(kwargs, {"activation": "gelu", "activation_params": {}})
-        self.assertEqual(mega_moe(**kwargs), ("gelu", {}, None))
+        expected = "gelu_tanh" if activation == "gelu_tanh" else "gelu"
+        self.assertEqual(kwargs, {"activation": expected, "activation_params": {}})
+        self.assertEqual(mega_moe(**kwargs), (expected, {}, None))
 
     @pytest.mark.parametrize("activation", ["gelu", "gelu_tanh", MoEActivation.GELU])
     def test_gelu_rejects_legacy_wrapper(self, activation):

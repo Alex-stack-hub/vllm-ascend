@@ -150,6 +150,70 @@ The following commands use TP4DP2 across all 8 NPUs on one 950DT Products node. 
       --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}'
     ```
 
+#### A5 DSpark with MXFP draft weights
+
+Use a self-contained Gemma4 DSpark checkpoint produced by DeepSpec and
+quantized with the matching ModelSlim Gemma4 DSpark practice. The draft keeps
+its embedding and LM head, uses MXFP8 for the auxiliary-state projection and
+attention, and MXFP4 for the draft MLP.
+
+=== "31B Dense + DSpark"
+
+    ```shell
+    export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+    export TARGET_MODEL=/models/gemma-4-31B-it-w4a4-mxfp4
+    export DRAFT_MODEL=/models/dspark-gemma4-31b-mxfp8-mxfp4
+
+    vllm serve ${TARGET_MODEL} \
+      --served-model-name gemma4 \
+      --tensor-parallel-size 4 \
+      --data-parallel-size 2 \
+      --quantization ascend \
+      --max-model-len 32768 \
+      --max-num-batched-tokens 8192 \
+      --max-num-seqs 16 \
+      --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+      --speculative-config "{\"method\":\"dspark\",\"model\":\"${DRAFT_MODEL}\",\"num_speculative_tokens\":7}"
+    ```
+
+=== "26B A4B + DSpark + MegaMoe"
+
+    ```shell
+    export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+    export TARGET_MODEL=/models/gemma-4-26B-A4B-it-w4a4-mxfp4
+    export DRAFT_MODEL=/models/dspark-gemma4-26b-a4b-mxfp8-mxfp4
+
+    vllm serve ${TARGET_MODEL} \
+      --served-model-name gemma4 \
+      --tensor-parallel-size 4 \
+      --data-parallel-size 2 \
+      --enable-expert-parallel \
+      --quantization ascend \
+      --max-model-len 32768 \
+      --max-num-batched-tokens 8192 \
+      --max-num-seqs 16 \
+      --additional-config '{"enable_fused_mc2":2}' \
+      --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+      --speculative-config "{\"method\":\"dspark\",\"model\":\"${DRAFT_MODEL}\",\"num_speculative_tokens\":7}"
+    ```
+
+The A4B path selects the A5 MegaMoe kernel for its 2816-wide residual stream,
+128 experts, top-8 routing, 1408-wide gate/up projection, and gated tanh-GELU.
+The draft itself stays dense; its target auxiliary states come from global
+attention layers.
+
+After a workload has completed, inspect speculative-decoding metrics:
+
+```shell
+curl -s http://127.0.0.1:8000/metrics | \
+  grep -E 'spec_decode_num_(drafts|accepted_tokens)(_per_pos)?'
+```
+
+`spec_decode_num_drafts` and `spec_decode_num_accepted_tokens` must both
+increase. Calculate `1 + accepted_tokens / drafts` as the mean acceptance
+length and compare output tokens per second against the same target command
+without `--speculative-config`.
+
 Common Issues Tip: If the service fails to start, HBM is insufficient, or requests are not scheduled as expected, refer to [Public FAQs](../../faqs.md) first, and then check the model-specific FAQ in Section 10.
 
 #### Key Parameters
@@ -342,6 +406,8 @@ Recommended tuning order:
 | Tensor parallelism | `--tensor-parallel-size` | Splits model computation across multiple NPUs. | Adjust according to model size and available devices. |
 | Expert parallelism | `--enable-expert-parallel` | Distributes experts for MoE variants. | Enable only for MoE deployment plans that use EP. |
 | MXFP4 quantization | `--quantization ascend` | Reduces weight and activation memory and uses Ascend MXFP4 operators. | Required for the MXFP4 checkpoints; omit it for BF16 weights. |
+| DSpark + DFlash | `--speculative-config` with `method=dspark` | Replaces target decode steps with accepted draft tokens and accelerates draft attention over long contexts. | Use a Gemma4 DSpark checkpoint with matching target tokenizer and hidden size. |
+| MegaMoe gated tanh-GELU | `--additional-config '{"enable_fused_mc2":2}'` | Fuses expert dispatch, MXFP GMM, Gemma4 GeGLU, and combine for the A4B target. | A5 only; use together with expert parallelism. |
 
 ## 10 FAQ
 

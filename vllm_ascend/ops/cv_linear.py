@@ -177,6 +177,11 @@ class CVLinearWrapper:
         return self.matmul(q_quant, q_scale, bias)
 
     @property
+    def supports_mxfp8_split(self) -> bool:
+        """Whether quantize-once/matmul-many is valid for this layer."""
+        return self._is_mxfp8_dynamic and not self._has_communication
+
+    @property
     def weight(self):
         return self.linear.weight
 
