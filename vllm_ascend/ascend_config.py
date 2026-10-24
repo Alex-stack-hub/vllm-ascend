@@ -569,8 +569,9 @@ class AscendConfig:
     # FULL graphs wait on descriptor-specific external events at consumers.
     # Default to overlap on A5 only; explicit settings override this policy.
     multistream_engram_overlap: bool = dataclasses.field(
-        default_factory=lambda: get_current_hardware_profile().device_adaptor_family
-        == DeviceAdaptorFamily.FP8_OPTIMIZED
+        default_factory=lambda: (
+            get_current_hardware_profile().device_adaptor_family == DeviceAdaptorFamily.FP8_OPTIMIZED
+        )
     )
     enable_prefill_mc2: bool = False
     multistream_overlap_shared_expert: bool = False
@@ -1108,6 +1109,7 @@ class AscendConfig:
             for architecture in model_architectures
         )
         hf_text_config = vllm_config.model_config.hf_text_config
+        is_gemma4 = getattr(hf_text_config, "model_type", None) == "gemma4_text"
         # K3 projects the residual stream before the routed FFN. Other models
         # retain the existing hidden-size lookup and supported dimensions.
         hidden_size = getattr(hf_text_config, "routed_expert_hidden_size", None) if is_kimi_k3 else None
@@ -1120,6 +1122,12 @@ class AscendConfig:
         supported_hidden_sizes = {1024, 2048, 3072, 4096, 5120, 6144, 7168, 8192}
         if is_kimi_k3:
             supported_hidden_sizes.add(3584)
+        if is_gemma4:
+            # Gemma 4 26B-A4B uses a 2816-wide residual stream.  The A5
+            # MegaMoe kernel accepts 64-aligned hidden dimensions, so keep the
+            # additional shape scoped to Gemma 4 instead of widening the
+            # framework-level allowlist for every MoE model.
+            supported_hidden_sizes.add(2816)
         if int(hidden_size) not in supported_hidden_sizes:
             logger.warning(
                 "MegaMoe requires hidden_size in %s; got %s.",
@@ -1138,6 +1146,11 @@ class AscendConfig:
         supported_intermediate_sizes = {1024, 2048, 3072, 4096, 7168}
         if is_minimax_m3 or is_kimi_k3:
             supported_intermediate_sizes.add(6144)
+        if is_gemma4:
+            # Gemma 4 26B-A4B has moe_intermediate_size=704.  MegaMoe receives
+            # the concatenated gate/up width (2 * 704), which satisfies the
+            # operator's 128-element alignment contract.
+            supported_intermediate_sizes.add(1408)
         # intermediate_hidden == l1_weights.dim1 == 2 * moe_intermediate_size.
         intermediate_hidden = 2 * int(moe_intermediate_size)
         if intermediate_hidden not in supported_intermediate_sizes:
