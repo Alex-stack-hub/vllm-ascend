@@ -9,7 +9,8 @@ import pytest
 import torch
 from vllm.v1.worker.gpu.spec_decode.dspark.speculator import DSparkSpeculator
 
-from vllm_ascend.models import qwen3_dflash2, qwen3_dspark
+from vllm_ascend.models import gemma4_dspark, qwen3_dflash2, qwen3_dspark
+from vllm_ascend.models.gemma4_dspark import AscendGemma4DSparkForCausalLM
 from vllm_ascend.models.kimi_k3_dspark import AscendK3DSparkForCausalLM
 from vllm_ascend.models.qwen3_dflash2 import DFlash2Qwen3ForCausalLM
 from vllm_ascend.models.qwen3_dspark import AscendQwen3DSparkForCausalLM
@@ -58,6 +59,7 @@ def test_post_process_receives_target_config_after_loading(monkeypatch, fail):
     "model_cls,projection_name,num_aux_layers",
     [
         (AscendQwen3DSparkForCausalLM, "fc", 2),
+        (AscendGemma4DSparkForCausalLM, "fc", 2),
         (AscendK3DSparkForCausalLM, "context_proj", 2),
         (DFlash2Qwen3ForCausalLM, "fc", 6),
     ],
@@ -94,6 +96,7 @@ def test_post_process_aligns_weights_without_modifying_target(
     )
     rotation = torch.tensor([[0.0, -1.0], [1.0, 0.0]], dtype=torch.float64)
     monkeypatch.setattr(qwen3_dspark, "get_rotation_path", lambda received: "/rotation" if rotated else None)
+    monkeypatch.setattr(gemma4_dspark, "align_draft_weights", qwen3_dspark.align_draft_weights)
     monkeypatch.setattr(qwen3_dflash2, "get_rotation_path", lambda received: "/rotation" if rotated else None)
     monkeypatch.setattr(qwen3_dspark, "get_pp_group", lambda: SimpleNamespace(world_size=pp_size))
     loader = MagicMock(return_value=rotation)
@@ -142,6 +145,11 @@ def test_post_process_aligns_weights_without_modifying_target(
         else:
             assert actual is original
             torch.testing.assert_close(actual.weight, before)
+
+
+def test_gemma4_dspark_keeps_checkpoint_embedding_and_head():
+    assert AscendGemma4DSparkForCausalLM.has_own_embed_tokens
+    assert AscendGemma4DSparkForCausalLM.has_own_lm_head
 
 
 @pytest.mark.parametrize("rotated", [False, True])

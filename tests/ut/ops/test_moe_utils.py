@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 import torch_npu  # noqa: F401 -- registers torch.npu used by the module under test
 from vllm.model_executor.layers.fused_moe.activation import MoEActivation
@@ -165,8 +166,6 @@ class TestMegaMoeActivationKwargs(unittest.TestCase):
         for activation in (
             "silu",
             "swiglu",
-            "gelu",
-            "gelu_tanh",
             "relu",
             "relu2",
             "silu_no_mul",
@@ -174,7 +173,6 @@ class TestMegaMoeActivationKwargs(unittest.TestCase):
             "legacy_custom",
             None,
             MoEActivation.SILU,
-            MoEActivation.GELU,
             MoEActivation.RELU2,
         ):
             for clamp in (None, 7.0):
@@ -194,6 +192,35 @@ class TestMegaMoeActivationKwargs(unittest.TestCase):
                     )
                     self.assertEqual(kwargs, {"activation_clamp": clamp})
                     self.assertEqual(legacy(**kwargs), clamp)
+
+    @pytest.mark.parametrize("activation", ["gelu", "gelu_tanh", MoEActivation.GELU])
+    def test_gelu_uses_current_cann_activation_api(self, activation):
+        def mega_moe(*args, activation="swiglu", activation_params=None, activation_clamp=None):
+            return activation, activation_params, activation_clamp
+
+        kwargs = select_mega_moe_activation_kwargs(
+            mega_moe,
+            activation=activation,
+            activation_clamp=7.0,
+            swiglu_alpha=1.702,
+            swiglu_beta=1.0,
+        )
+        self.assertEqual(kwargs, {"activation": "gelu", "activation_params": {}})
+        self.assertEqual(mega_moe(**kwargs), ("gelu", {}, None))
+
+    @pytest.mark.parametrize("activation", ["gelu", "gelu_tanh", MoEActivation.GELU])
+    def test_gelu_rejects_legacy_wrapper(self, activation):
+        def legacy(*args, activation_clamp=None):
+            return activation_clamp
+
+        with self.assertRaisesRegex(RuntimeError, "does not expose GELU"):
+            select_mega_moe_activation_kwargs(
+                legacy,
+                activation=activation,
+                activation_clamp=None,
+                swiglu_alpha=1.702,
+                swiglu_beta=1.0,
+            )
 
     def test_select_mega_moe_activation_kwargs_binds_swiglu_aliases(self):
         def mega_moe(*args, activation_clamp=None, swiglu_alpha=1.0, swiglu_beta=0.0):

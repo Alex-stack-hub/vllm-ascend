@@ -1,0 +1,6 @@
+pr: 2
+entries:
+  - category: performance
+    text: Added Ascend runtime support for Gemma 4 DSpark draft models and MegaMoe tanh-GELU activation selection.
+    model: Gemma-4
+    hardware: [A5]
