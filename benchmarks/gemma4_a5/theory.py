@@ -23,6 +23,8 @@ MODELS = {
         "full_head_dim": 512,
         "draft_layers": 5,
         "mxfp4_weight_share": 0.72,
+        "total_params": 31e9,
+        "active_params": 31e9,
         "moe": False,
     },
     "26b-a4b": {
@@ -35,6 +37,8 @@ MODELS = {
         "full_head_dim": 512,
         "draft_layers": 4,
         "mxfp4_weight_share": 0.80,
+        "total_params": 26e9,
+        "active_params": 4e9,
         "moe": True,
     },
 }
@@ -54,6 +58,35 @@ DECODE_WEIGHT_FRACTION = {1: 0.82, 4: 0.72, 8: 0.62, 16: 0.48, 32: 0.32, 64: 0.2
 SPECULATIVE_GAIN_REALIZATION = {1: 0.72, 4: 0.66, 8: 0.57, 16: 0.45, 32: 0.32, 64: 0.20}
 CONTROL_OVERHEAD_FRACTION = {1: 0.12, 4: 0.10, 8: 0.085, 16: 0.065, 32: 0.045, 64: 0.03}
 MOE_COMM_OVERLAP = {1: 0.45, 4: 0.55, 8: 0.65, 16: 0.72, 32: 0.78, 64: 0.80}
+
+HARDWARE = {
+    "950dt": {
+        "hbm_capacity_bytes": 144e9,
+        "hbm_bandwidth_bytes_per_second": 4e12,
+        "interconnect_bytes_per_second": 2e12,
+        "mxfp8_flops": 1e15,
+        "mxfp4_flops": 2e15,
+        # Huawei publishes FP8/MXFP8 and MXFP4 peaks but not a BF16 peak in
+        # the cited 950DT announcement. Keep the inferred 2:1 ratio explicit.
+        "assumed_bf16_flops": 0.5e15,
+    }
+}
+
+DENSE_HBM_EFFICIENCY = {1: 0.62, 4: 0.68, 8: 0.72, 16: 0.75, 32: 0.77, 64: 0.78}
+DENSE_TP_EFFICIENCY = {1: 0.82, 4: 0.84, 8: 0.85, 16: 0.85, 32: 0.84, 64: 0.82}
+A4B_HBM_EFFICIENCY = {1: 0.50, 4: 0.58, 8: 0.62, 16: 0.66, 32: 0.70, 64: 0.72}
+A4B_EP_EFFICIENCY = {1: 0.75, 4: 0.72, 8: 0.68, 16: 0.64, 32: 0.60, 64: 0.58}
+DENSE_PREFILL_CUBE_EFFICIENCY = {1: 0.42, 4: 0.48, 8: 0.52, 16: 0.55, 32: 0.57, 64: 0.58}
+A4B_PREFILL_CUBE_EFFICIENCY = {1: 0.32, 4: 0.38, 8: 0.42, 16: 0.45, 32: 0.47, 64: 0.48}
+
+# Closed-batch planning model. The fixed term covers scheduler and launch work
+# that does not scale with prompt tokens. It is deliberately visible so a
+# measured intercept can replace it without changing the roofline equations.
+PREFILL_FIXED_OVERHEAD_SECONDS = 0.006
+B3_SINGLE_STREAM_STEP_FLOOR_SECONDS = {
+    "31b": 0.00055,
+    "26b-a4b": 0.00035,
+}
 
 
 def _validate_ratio(parser: argparse.ArgumentParser, name: str, value: float) -> None:
@@ -254,6 +287,190 @@ def expected_curve(args: argparse.Namespace, bounds: dict[str, Any]) -> list[dic
     return rows
 
 
+def _prefill_flops(cfg: dict[str, Any], prompt_tokens: int, window: int) -> float:
+    """Approximate one-request prefill FLOPs from active weights and attention."""
+    sliding_layers = cfg["layers"] - cfg["full_layers"]
+    sliding_q_width = cfg["q_heads"] * cfg["sliding_head_dim"]
+    full_q_width = cfg["q_heads"] * cfg["full_head_dim"]
+    linear_flops = 2.0 * cfg["active_params"] * prompt_tokens
+    attention_flops = (
+        2.0
+        * prompt_tokens
+        * (
+            sliding_layers * sliding_q_width * min(prompt_tokens, window)
+            + cfg["full_layers"] * full_q_width * prompt_tokens
+        )
+    )
+    return linear_flops + attention_flops
+
+
+def _batch_weight_bytes(cfg: dict[str, Any], concurrency: int, bytes_per_parameter: float) -> float:
+    """Model the union of weights touched by one decode batch.
+
+    Dense decoding visits all weights once per batch. For A4B, independent
+    requests gradually cover more experts, so the active-weight union grows
+    with concurrency and is capped by the total checkpoint size.
+    """
+    total = cfg["total_params"] * bytes_per_parameter
+    if not cfg["moe"]:
+        return total
+    active_union = cfg["active_params"] * bytes_per_parameter * concurrency
+    return min(total, active_union)
+
+
+def absolute_serving_report(
+    args: argparse.Namespace,
+    bounds: dict[str, Any],
+    curve: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Convert relative curves into a capped 950DT closed-batch forecast."""
+    cfg = MODELS[args.model]
+    hardware = HARDWARE[args.hardware]
+    aggregate_bandwidth = args.chips * hardware["hbm_bandwidth_bytes_per_second"]
+    aggregate_bf16_flops = args.chips * hardware["assumed_bf16_flops"]
+    mixed_weight_ratio = 1.0 / bounds["weight_bandwidth_upper_bound"]["model_mix"]
+    mixed_bytes_per_parameter = 2.0 * mixed_weight_ratio
+    mixed_peak_per_chip = 1.0 / (
+        cfg["mxfp4_weight_share"] / hardware["mxfp4_flops"]
+        + (1.0 - cfg["mxfp4_weight_share"]) / hardware["mxfp8_flops"]
+    )
+    aggregate_mixed_flops = args.chips * mixed_peak_per_chip
+    ideal_spec = bounds["dspark"]["ideal_decode_speedup"]
+    rows: list[dict[str, Any]] = []
+
+    for row in curve:
+        concurrency = row["concurrency"]
+        prompt_tokens = row["input_tokens"]
+        output_tokens = row["output_tokens"]
+        if cfg["moe"]:
+            hbm_efficiency = _interpolate(A4B_HBM_EFFICIENCY, concurrency)
+            topology_efficiency = _interpolate(A4B_EP_EFFICIENCY, concurrency)
+            prefill_efficiency = _interpolate(A4B_PREFILL_CUBE_EFFICIENCY, concurrency)
+        else:
+            hbm_efficiency = _interpolate(DENSE_HBM_EFFICIENCY, concurrency)
+            topology_efficiency = _interpolate(DENSE_TP_EFFICIENCY, concurrency)
+            prefill_efficiency = _interpolate(DENSE_PREFILL_CUBE_EFFICIENCY, concurrency)
+
+        bf16_batch_weight_bytes = _batch_weight_bytes(cfg, concurrency, 2.0)
+        mixed_batch_weight_bytes = _batch_weight_bytes(cfg, concurrency, mixed_bytes_per_parameter)
+        b0_memory_tokens_per_second = (
+            concurrency * aggregate_bandwidth * hbm_efficiency * topology_efficiency / bf16_batch_weight_bytes
+        )
+        b0_compute_tokens_per_second = (
+            aggregate_bf16_flops * prefill_efficiency * topology_efficiency / (2.0 * cfg["active_params"])
+        )
+        b0_decode_tokens_per_second = min(
+            b0_memory_tokens_per_second,
+            b0_compute_tokens_per_second,
+        )
+
+        b3_memory_ceiling = (
+            concurrency
+            * aggregate_bandwidth
+            * hbm_efficiency
+            * topology_efficiency
+            / mixed_batch_weight_bytes
+            * ideal_spec
+        )
+        b3_compute_ceiling = (
+            aggregate_mixed_flops * prefill_efficiency * topology_efficiency / (2.0 * cfg["active_params"]) * ideal_spec
+        )
+        b3_step_floor = B3_SINGLE_STREAM_STEP_FLOOR_SECONDS[args.model] * (1.0 + 0.06 * math.log2(concurrency))
+        b3_latency_ceiling = concurrency / b3_step_floor
+        decode_speedup = row["expected_speedup"]["b3_vs_b0_tpot_or_decode_throughput"]
+        b3_decode_tokens_per_second = min(
+            b0_decode_tokens_per_second * decode_speedup,
+            b3_memory_ceiling,
+            b3_compute_ceiling,
+            b3_latency_ceiling,
+        )
+
+        prompt_flops = _prefill_flops(cfg, prompt_tokens, args.window)
+        b0_prefill_seconds = (
+            concurrency * prompt_flops / (aggregate_bf16_flops * prefill_efficiency * topology_efficiency)
+            + PREFILL_FIXED_OVERHEAD_SECONDS
+        )
+        ttft_speedup = row["expected_speedup"]["b3_vs_b0_ttft"]
+        b3_prefill_seconds = b0_prefill_seconds / ttft_speedup
+
+        b0_tpot_seconds = concurrency / b0_decode_tokens_per_second
+        b3_tpot_seconds = concurrency / b3_decode_tokens_per_second
+        b0_batch_latency = b0_prefill_seconds + output_tokens * b0_tpot_seconds
+        b3_batch_latency = b3_prefill_seconds + output_tokens * b3_tpot_seconds
+        rows.append(
+            {
+                **{key: row[key] for key in ("workload", "input_tokens", "output_tokens", "concurrency")},
+                "b0": {
+                    "ttft_ms": 1000.0 * b0_prefill_seconds,
+                    "tpot_ms": 1000.0 * b0_tpot_seconds,
+                    "output_tokens_per_second": b0_decode_tokens_per_second,
+                    "requests_per_second": concurrency / b0_batch_latency,
+                    "closed_batch_latency_seconds": b0_batch_latency,
+                },
+                "b3": {
+                    "ttft_ms": 1000.0 * b3_prefill_seconds,
+                    "tpot_ms": 1000.0 * b3_tpot_seconds,
+                    "output_tokens_per_second": b3_decode_tokens_per_second,
+                    "requests_per_second": concurrency / b3_batch_latency,
+                    "closed_batch_latency_seconds": b3_batch_latency,
+                },
+                "realized_speedup": {
+                    "ttft": b0_prefill_seconds / b3_prefill_seconds,
+                    "tpot_or_output_throughput": b3_decode_tokens_per_second / b0_decode_tokens_per_second,
+                    "requests_per_second": b0_batch_latency / b3_batch_latency,
+                },
+                "active_ceiling": {
+                    "b0": "memory" if b0_memory_tokens_per_second <= b0_compute_tokens_per_second else "compute",
+                    "b3": min(
+                        (
+                            (b0_decode_tokens_per_second * decode_speedup, "relative-curve"),
+                            (b3_memory_ceiling, "memory"),
+                            (b3_compute_ceiling, "compute"),
+                            (b3_latency_ceiling, "step-latency"),
+                        )
+                    )[1],
+                },
+            }
+        )
+
+    one_chip_bf16_dense = hardware["hbm_bandwidth_bytes_per_second"] / (2.0 * cfg["total_params"])
+    one_chip_mixed_active = hardware["hbm_bandwidth_bytes_per_second"] / (
+        mixed_bytes_per_parameter * cfg["active_params"]
+    )
+    return {
+        "model": args.model,
+        "hardware": args.hardware,
+        "chips": args.chips,
+        "official_per_chip_spec": {key: value for key, value in hardware.items() if key != "assumed_bf16_flops"},
+        "explicit_inference": {
+            "assumed_bf16_flops_per_chip": hardware["assumed_bf16_flops"],
+            "basis": "one-half of the published MXFP8 peak; replace with a measured BF16 roofline",
+        },
+        "topology": "TP=8" if not cfg["moe"] else "TP/EP=8",
+        "single_chip_raw_weight_roofline_tokens_per_second": {
+            "bf16_total_checkpoint": one_chip_bf16_dense,
+            "mixed_precision_active_weights": one_chip_mixed_active,
+        },
+        "assumptions": {
+            "closed_batch_without_external_queueing": True,
+            "prefix_cache": False,
+            "scheduler_admits_all_concurrent_requests": True,
+            "fixed_prefill_overhead_ms": 1000.0 * PREFILL_FIXED_OVERHEAD_SECONDS,
+            "b3_single_stream_step_floor_ms": {
+                model: 1000.0 * floor for model, floor in B3_SINGLE_STREAM_STEP_FLOOR_SECONDS.items()
+            },
+            "dense_hbm_efficiency": DENSE_HBM_EFFICIENCY,
+            "dense_tp_efficiency": DENSE_TP_EFFICIENCY,
+            "a4b_hbm_efficiency": A4B_HBM_EFFICIENCY,
+            "a4b_ep_efficiency": A4B_EP_EFFICIENCY,
+            "dense_prefill_cube_efficiency": DENSE_PREFILL_CUBE_EFFICIENCY,
+            "a4b_prefill_cube_efficiency": A4B_PREFILL_CUBE_EFFICIENCY,
+            "a4b_expert_union": "min(total weights, active weights times concurrency)",
+        },
+        "curve": rows,
+    }
+
+
 def _markdown_matrix(model: str, rows: list[dict[str, Any]]) -> str:
     lines = [
         f"# {model} central expected speedup matrix",
@@ -277,6 +494,30 @@ def _markdown_matrix(model: str, rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _markdown_absolute(report: dict[str, Any]) -> str:
+    lines = [
+        f"# {report['model']} theoretical serving forecast on {report['chips']}x950DT",
+        "",
+        "B0 is BF16 eager AR; B3 is the final MXFP + DSpark + graph/fusion path.",
+        "Values are closed-batch planning estimates, not measurements.",
+        "",
+        "| Workload | C | B0 TTFT ms | B3 TTFT ms | B0 TPOT ms | B3 TPOT ms | "
+        "B0 tok/s | B3 tok/s | B0 req/s | B3 req/s |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in report["curve"]:
+        b0 = row["b0"]
+        b3 = row["b3"]
+        lines.append(
+            f"| {row['workload']} | {row['concurrency']} | "
+            f"{b0['ttft_ms']:.1f} | {b3['ttft_ms']:.1f} | "
+            f"{b0['tpot_ms']:.2f} | {b3['tpot_ms']:.2f} | "
+            f"{b0['output_tokens_per_second']:.0f} | {b3['output_tokens_per_second']:.0f} | "
+            f"{b0['requests_per_second']:.2f} | {b3['requests_per_second']:.2f} |"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("model", choices=MODELS)
@@ -288,6 +529,9 @@ def main() -> None:
     parser.add_argument("--comm-fraction", type=float, default=0.25)
     parser.add_argument("--markov-topk", type=int, default=64)
     parser.add_argument("--matrix", action="store_true", help="emit the expected serving curve matrix")
+    parser.add_argument("--absolute", action="store_true", help="emit the capped absolute serving forecast")
+    parser.add_argument("--hardware", choices=HARDWARE, default="950dt")
+    parser.add_argument("--chips", type=int, default=8)
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     args = parser.parse_args()
 
@@ -299,9 +543,11 @@ def main() -> None:
         parser.error("--draft-tokens must be positive and --draft-cost-ratio must be non-negative")
     if not 1 <= args.markov_topk <= 262144:
         parser.error("--markov-topk must be in [1, 262144]")
+    if args.chips <= 0:
+        parser.error("--chips must be positive")
 
     bounds = architecture_report(args)
-    if not args.matrix:
+    if not args.matrix and not args.absolute:
         report = {
             **bounds,
             "notes": [
@@ -318,6 +564,13 @@ def main() -> None:
         return
 
     curve = expected_curve(args, bounds)
+    if args.absolute:
+        report = absolute_serving_report(args, bounds, curve)
+        if args.format == "markdown":
+            print(_markdown_absolute(report))
+            return
+        print(json.dumps(report, indent=2))
+        return
     if args.format == "markdown":
         print(_markdown_matrix(args.model, curve))
         return

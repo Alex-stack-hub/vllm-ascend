@@ -193,6 +193,14 @@ python benchmarks/gemma4_a5/theory.py 26b-a4b --draft-cost-ratio 0.10 \
   --matrix --format markdown
 ```
 
+Generate the capped absolute planning forecast for one 8x950DT node:
+
+```bash
+python benchmarks/gemma4_a5/theory.py 31b --absolute --format markdown
+python benchmarks/gemma4_a5/theory.py 26b-a4b --draft-cost-ratio 0.10 \
+  --absolute --format markdown
+```
+
 The curve model names four baselines explicitly: B0 is BF16 eager
 autoregressive serving, B1 is MXFP target eager, B2 is adaptive DSpark before
 the P1/P2 device-metadata and FIA-prolog changes, and B3 is the current final
@@ -200,6 +208,9 @@ path. The JSON form emits every central Amdahl assumption so A5 profiler shares
 can replace them without changing the formulas. See
 [`THEORETICAL_BASELINE.md`](THEORETICAL_BASELINE.md) for the complete workload
 interpretation, uncertainty bands, and expected curves.
+The hardware contract, formulas and all original-versus-optimized absolute
+values are in
+[`ABSOLUTE_950DT_BASELINE.md`](ABSOLUTE_950DT_BASELINE.md).
 
 The report intentionally keeps independent bounds separate. Quantization,
 speculative decoding, graph replay, and communication overlap share bottlenecks,

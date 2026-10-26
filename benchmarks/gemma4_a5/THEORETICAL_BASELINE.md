@@ -3,6 +3,10 @@
 This document separates exact structural ratios from assumption-driven serving
 estimates. It is a planning baseline, not A5 benchmark evidence.
 
+For absolute TTFT, TPOT, output-token throughput and request-throughput values
+on a defined eight-card 950DT node, see
+[`ABSOLUTE_950DT_BASELINE.md`](ABSOLUTE_950DT_BASELINE.md).
+
 ## Baselines
 
 - **B0**: BF16 eager autoregressive target with generic operator flow.
