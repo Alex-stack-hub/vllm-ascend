@@ -1,0 +1,6 @@
+pr: 2
+entries:
+  - category: performance
+    text: Added an A5 Gemma 4 text inference stack with reduced K=V target projections, a fused FIA prolog and paged KV write, device-resident adaptive FULL-graph metadata, fused MXFP8 DSpark context projection, sparse Markov correction, and MegaMoe gated tanh-GELU support for the 26B-A4B target.
+    model: Gemma-4
+    hardware: [A5]

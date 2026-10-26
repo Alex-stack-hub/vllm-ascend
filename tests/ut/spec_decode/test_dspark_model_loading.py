@@ -9,7 +9,8 @@ import pytest
 import torch
 from vllm.v1.worker.gpu.spec_decode.dspark.speculator import DSparkSpeculator
 
-from vllm_ascend.models import qwen3_dflash2, qwen3_dspark
+from vllm_ascend.models import gemma4_dspark, qwen3_dflash2, qwen3_dspark
+from vllm_ascend.models.gemma4_dspark import AscendGemma4DSparkForCausalLM, AscendGemma4DSparkModel
 from vllm_ascend.models.kimi_k3_dspark import AscendK3DSparkForCausalLM
 from vllm_ascend.models.qwen3_dflash2 import DFlash2Qwen3ForCausalLM
 from vllm_ascend.models.qwen3_dspark import AscendQwen3DSparkForCausalLM
@@ -58,6 +59,7 @@ def test_post_process_receives_target_config_after_loading(monkeypatch, fail):
     "model_cls,projection_name,num_aux_layers",
     [
         (AscendQwen3DSparkForCausalLM, "fc", 2),
+        (AscendGemma4DSparkForCausalLM, "fc", 2),
         (AscendK3DSparkForCausalLM, "context_proj", 2),
         (DFlash2Qwen3ForCausalLM, "fc", 6),
     ],
@@ -94,6 +96,7 @@ def test_post_process_aligns_weights_without_modifying_target(
     )
     rotation = torch.tensor([[0.0, -1.0], [1.0, 0.0]], dtype=torch.float64)
     monkeypatch.setattr(qwen3_dspark, "get_rotation_path", lambda received: "/rotation" if rotated else None)
+    monkeypatch.setattr(gemma4_dspark, "align_draft_weights", qwen3_dspark.align_draft_weights)
     monkeypatch.setattr(qwen3_dflash2, "get_rotation_path", lambda received: "/rotation" if rotated else None)
     monkeypatch.setattr(qwen3_dspark, "get_pp_group", lambda: SimpleNamespace(world_size=pp_size))
     loader = MagicMock(return_value=rotation)
@@ -142,6 +145,73 @@ def test_post_process_aligns_weights_without_modifying_target(
         else:
             assert actual is original
             torch.testing.assert_close(actual.weight, before)
+
+
+def test_gemma4_dspark_keeps_checkpoint_embedding_and_head():
+    assert AscendGemma4DSparkForCausalLM.has_own_embed_tokens
+    assert AscendGemma4DSparkForCausalLM.has_own_lm_head
+
+
+def test_gemma4_mxfp8_context_projection_quantizes_once(monkeypatch):
+    model = AscendGemma4DSparkModel.__new__(AscendGemma4DSparkModel)
+    torch.nn.Module.__init__(model)
+    model._hidden_norm_weight = torch.ones(4)
+    model._v_norm_weights = torch.ones(2, 2)
+    model._rms_norm_eps = 1e-6
+
+    events = []
+
+    class Wrapper:
+        bias = None
+
+        def __init__(self, value):
+            self.value = value
+
+        def quantize(self, x):
+            events.append("quantize")
+            return x + 10, torch.ones(x.shape[0], 1)
+
+        def matmul(self, x, scale, bias):
+            events.append(("matmul", self.value, x.data_ptr(), scale.clone(), bias))
+            return torch.full((x.shape[0], 2), self.value, dtype=x.dtype)
+
+    model._context_k_proj_wrappers = [Wrapper(1.0), Wrapper(2.0)]
+
+    def fake_rms_norm(output, value, weight, epsilon):
+        del weight, epsilon
+        output.copy_(value)
+
+    monkeypatch.setattr(gemma4_dspark.ops, "rms_norm", fake_rms_norm)
+    context = torch.arange(12, dtype=torch.float32).view(3, 4)
+    all_k, all_v = model._project_context_kv(context, 3, 2, 1, 2)
+
+    assert events[0] == "quantize"
+    assert [event[0:2] for event in events[1:]] == [("matmul", 1.0), ("matmul", 2.0)]
+    assert events[1][2] == events[2][2]
+    torch.testing.assert_close(all_k[0], torch.ones(3, 1, 2))
+    torch.testing.assert_close(all_k[1], torch.full((3, 1, 2), 2.0))
+    torch.testing.assert_close(all_v, all_k)
+
+
+def test_gemma4_context_projection_keeps_upstream_path_for_non_mxfp8(monkeypatch):
+    model = AscendGemma4DSparkModel.__new__(AscendGemma4DSparkModel)
+    torch.nn.Module.__init__(model)
+    layer_attn = SimpleNamespace(
+        k_proj=SimpleNamespace(quant_method=None),
+        k_norm=SimpleNamespace(weight=torch.nn.Parameter(torch.ones(2))),
+        head_dim=2,
+    )
+    fallback = MagicMock()
+    monkeypatch.setattr(
+        gemma4_dspark.Gemma4DSparkModel,
+        "_build_context_kv_buffers",
+        fallback,
+    )
+
+    model._build_context_kv_buffers([layer_attn], False)
+
+    assert model._context_k_proj_wrappers is None
+    fallback.assert_called_once_with([layer_attn], False)
 
 
 @pytest.mark.parametrize("rotated", [False, True])

@@ -652,6 +652,60 @@ class TestAscendAttentionBackendImpl(TestBase):
         self.assertIs(call_kwargs["value_cache"], value_cache)
         self.assertTrue(call_kwargs["use_bnsd"])
 
+    def test_fused_prolog_skips_generic_cache_write_but_publishes_completion(self):
+        query = torch.empty(2, 8, 64)
+        key_cache = torch.empty(4, 128, 8, 64)
+        value_cache = torch.empty_like(key_cache)
+        output = torch.empty_like(query)
+        metadata = MagicMock()
+
+        with (
+            patch("vllm_ascend.attention.attention_v1.DeviceOperator.reshape_and_cache") as reshape_and_cache,
+            patch("vllm_ascend.attention.attention_v1.notify_kv_cache_written") as notify,
+        ):
+            returned = self.impl.reshape_and_cache(
+                query,
+                torch.empty(0, 8, 64),
+                torch.empty(0, 8, 64),
+                (key_cache, value_cache),
+                metadata,
+                output,
+            )
+
+        reshape_and_cache.assert_not_called()
+        notify.assert_called_once_with()
+        self.assertIs(self.impl.key_cache, key_cache)
+        self.assertIs(self.impl.value_cache, value_cache)
+        self.assertEqual(returned[0], query)
+        self.assertEqual(returned[1].numel(), 0)
+        self.assertEqual(returned[2].numel(), 0)
+        self.assertIs(returned[3], output)
+
+    def test_forward_publishes_fused_prolog_cache_write(self):
+        query = torch.empty(2, 8, 64)
+        empty_kv = torch.empty(0, 8, 64)
+        key_cache = torch.empty(4, 128, 8, 64)
+        value_cache = torch.empty_like(key_cache)
+        output = torch.empty_like(query)
+        metadata = MagicMock()
+        metadata.model_runner_type = "generate"
+        self.impl.forward_impl = MagicMock(return_value=output)
+        layer = SimpleNamespace(layer_name="layer", _k_scale_float=1.0, _v_scale_float=1.0)
+
+        with patch.object(self.impl, "reshape_and_cache", return_value=(query, None, None, output)) as cache_write:
+            returned = self.impl.forward(
+                layer,
+                query,
+                empty_kv,
+                empty_kv,
+                (key_cache, value_cache),
+                metadata,
+                output,
+            )
+
+        cache_write.assert_called_once_with(query, empty_kv, empty_kv, (key_cache, value_cache), metadata, output)
+        self.assertIs(returned, output)
+
     def test_get_fia_params_uses_layout_specific_cache_view(self):
         metadata = MagicMock()
         metadata.attn_state = AscendAttentionState.DecodeOnly

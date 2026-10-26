@@ -555,6 +555,9 @@ class AscendModelState(DefaultModelState):
             for_cudagraph_capture=for_capture,
             # Same wiring as model_runner_v1
             full_graph_mode=cudagraph_mode == CUDAGraphMode.FULL,
+            use_device_fia_lengths=(
+                cudagraph_mode == CUDAGraphMode.FULL and getattr(self, "use_device_fia_lengths", False)
+            ),
             model_specific_attn_metadata=model_specific_attn_metadata,
             req_ids_tensor=offload_req_ids.gpu[:num_reqs] if offload_req_ids is not None else None,
             token_to_req=offload_token_to_req.gpu[:num_input_tokens] if offload_token_to_req is not None else None,

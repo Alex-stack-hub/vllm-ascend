@@ -210,7 +210,7 @@ class AscendMetadata:
     # never run again after capture.
     query_start_loc_gpu: torch.Tensor = None
     seq_lens_gpu: torch.Tensor = None
-
+    use_device_fia_lengths: bool = False
     # ********************** KV Cache Related Properties ********************* #
     # Block addresses per sequence (Seq id -> list of physical block).
     # (batch_size, max_blocks_per_seq)
@@ -448,7 +448,8 @@ class AscendAttentionMetadataBuilder(AttentionMetadataBuilder[AscendMetadata]):
             block_tables=block_table,
             query_start_loc=query_start_loc,
             query_start_loc_gpu=common_attn_metadata.query_start_loc,
-            seq_lens_gpu=common_attn_metadata.seq_lens,
+            seq_lens_gpu=(seq_lens if common_attn_metadata.use_device_fia_lengths else common_attn_metadata.seq_lens),
+            use_device_fia_lengths=common_attn_metadata.use_device_fia_lengths,
             seq_lens=seq_lens,
             seq_lens_cpu=seq_lens,
             seq_lens_list=seq_lens_list,
@@ -543,6 +544,11 @@ class FIAV2ParamProvider:
 
     def resolve(self, attn_metadata) -> dict[str, Any]:
         metadata = attn_metadata[self.layer_name]
+        if metadata.use_device_fia_lengths:
+            return {
+                "actual_seq_qlen": metadata.query_start_loc_gpu[1:],
+                "actual_seq_kvlen": metadata.seq_lens_gpu,
+            }
         return {
             "actual_seq_qlen": metadata.actual_seq_lengths_q,
             "actual_seq_kvlen": metadata.seq_lens_list,
@@ -562,6 +568,11 @@ class PAParamProvider:
 
 
 class AscendAttentionBackendImpl(AttentionImpl):
+    @staticmethod
+    def _uses_fused_prolog_cache(key: torch.Tensor | None, value: torch.Tensor | None) -> bool:
+        """Identify the graph-stable marker tensors passed by Gemma4 prolog."""
+        return key is not None and value is not None and key.numel() == 0 and value.numel() == 0
+
     def __init__(
         self,
         num_heads: int,
@@ -761,9 +772,14 @@ class AscendAttentionBackendImpl(AttentionImpl):
         output: torch.Tensor,
     ) -> torch.Tensor:
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(key, value, attn_metadata)
-        actual_seq_lengths_kv = attn_metadata.seq_lens
-        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
-        actual_seq_lengths_q = attn_metadata.actual_seq_lengths_q
+        if attn_metadata.use_device_fia_lengths:
+            actual_seq_lengths_q = attn_metadata.query_start_loc_gpu[1:]
+            actual_seq_lengths_kv = attn_metadata.seq_lens_gpu
+            num_tokens = attn_metadata.num_actual_tokens
+        else:
+            actual_seq_lengths_kv = attn_metadata.seq_lens
+            num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+            actual_seq_lengths_q = attn_metadata.actual_seq_lengths_q
         softmax_lse = torch.empty(1, dtype=query.dtype, device=query.device)
         output_view = output[: attn_metadata.num_actual_tokens]
         if block_table is None:
@@ -888,9 +904,17 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 )
 
         if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
-            block_size = 128
-            block_table = None
-            actual_seq_lengths_kv = attn_metadata.actual_seq_lengths_q
+            if self._uses_fused_prolog_cache(key, value):
+                # A fused prolog may have already written this step's K/V.
+                # Consume the paged cache directly and avoid a second cache
+                # update while preserving ordinary prefill behavior otherwise.
+                key, value, block_size = self._get_kv_cache_view(self.key_cache, self.value_cache)
+                block_table = attn_metadata.block_tables
+                actual_seq_lengths_kv = attn_metadata.seq_lens_list
+            else:
+                block_size = 128
+                block_table = None
+                actual_seq_lengths_kv = attn_metadata.actual_seq_lengths_q
             if self.attn_type == AttentionType.ENCODER_DECODER:
                 actual_seq_lengths_kv = torch.cumsum(attn_metadata.seq_lens, dim=0).tolist()
         elif attn_metadata.attn_state == AscendAttentionState.PrefillCacheHit:
@@ -922,7 +946,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
         # runner v2, there is not capturing attribute in forward_context,
         # just use getattr to avoid attribute error.
         if _EXTRA_CTX.capturing:
-            if self.sinks is not None:
+            if self.sinks is not None or attn_metadata.use_device_fia_lengths:
                 attn_output, num_tokens = self.full_graph_fia_v2(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
@@ -930,6 +954,7 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 attn_output, num_tokens = self.full_graph_fia(query, key, value, attn_metadata, output)
                 output[:num_tokens] = attn_output[:num_tokens]
                 return output
+        fused_prolog_cache = self._uses_fused_prolog_cache(key, value)
         passed_value = value
         key, value, block_size, block_table, actual_seq_lengths_kv = self._get_fia_params(
             key, value, attn_metadata, kv_cache
@@ -1006,6 +1031,28 @@ class AscendAttentionBackendImpl(AttentionImpl):
                     pre_tokens=self.sliding_window,
                     next_tokens=0,
                     sparse_mode=4,
+                )
+            elif fused_prolog_cache:
+                # The fused Gemma4 prolog already populated paged K/V. Call
+                # FIA directly with that cache; the generic wrapper's
+                # prefill-no-cache path expects current K/V tensors and would
+                # otherwise attempt another cache update.
+                attn_output, _ = torch_npu.npu_fused_infer_attention_score(
+                    query=query,
+                    key=key,
+                    value=value,
+                    atten_mask=attn_metadata.attn_mask,
+                    block_table=block_table,
+                    input_layout="TND",
+                    block_size=block_size,
+                    actual_seq_lengths=attn_metadata.actual_seq_lengths_q,
+                    actual_seq_lengths_kv=actual_seq_lengths_kv,
+                    num_key_value_heads=self.num_kv_heads,
+                    num_heads=self.num_heads,
+                    scale=self.scale,
+                    pre_tokens=SWA_INT_MAX,
+                    next_tokens=0,
+                    sparse_mode=3,
                 )
             else:
                 # ChunkedPrefill mixing prefill+decode: split into a per-phase
@@ -1221,6 +1268,12 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 # Writing their dummy/current K/V would overwrite shared slots.
                 if self.is_kv_producer:
                     attn_metadata.reshape_cache_event.record()
+                return query, key, value, output
+            if self._uses_fused_prolog_cache(key, value):
+                # Gemma4's fused FIA prolog has already written the current
+                # K/V rows into this cache. Publish completion but do not run
+                # the generic reshape-and-cache kernel a second time.
+                notify_kv_cache_written()
                 return query, key, value, output
             slots = attn_metadata.slot_mapping
             encoder_decoder = self.attn_type == AttentionType.ENCODER_DECODER

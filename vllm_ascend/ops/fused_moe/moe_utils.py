@@ -184,7 +184,8 @@ def select_mega_moe_activation_kwargs(
     kwargs: dict[str, object] = {"activation_clamp": activation_clamp}
     activation_name = getattr(activation, "value", activation)
     is_situ = activation_name == "situ"
-    if not is_situ and activation_name not in ("swigluoai", "swigluoai_uninterleave"):
+    is_gelu = activation_name in ("gelu", "gelu_tanh")
+    if not is_situ and not is_gelu and activation_name not in ("swigluoai", "swigluoai_uninterleave"):
         return kwargs
 
     activation_parameter_pairs = (
@@ -234,6 +235,16 @@ def select_mega_moe_activation_kwargs(
         if situ_linear_beta is not None:
             params["linear_beta"] = situ_linear_beta
         return {"activation": "situglu", "activation_params": params}
+    if is_gelu:
+        if not {"activation", "activation_params"}.issubset(parameter_names):
+            raise RuntimeError(
+                "The installed CANN MegaMoe wrapper does not expose GELU activation selection. "
+                "Install a compatible cann_ops_transformer build or disable fused MC2."
+            )
+        # Keep Gemma 4's gated tanh-GELU distinct from elementwise GELU. The
+        # former consumes [gate, up] and halves the first projection width.
+        activation_name = "gelu_tanh" if activation_name == "gelu_tanh" else "gelu"
+        return {"activation": activation_name, "activation_params": {}}
     if {"activation", "activation_params"}.issubset(parameter_names):
         kwargs.update(
             activation="swigluoai",
