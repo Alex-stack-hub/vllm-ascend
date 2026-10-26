@@ -7,17 +7,18 @@ For absolute TTFT, TPOT, output-token throughput and request-throughput values
 on a defined eight-card 950DT node, see
 [`ABSOLUTE_950DT_BASELINE.md`](ABSOLUTE_950DT_BASELINE.md).
 
-## Baselines
+## Comparison configurations
 
-- **B0**: BF16 eager autoregressive target with generic operator flow.
-- **B1**: MXFP target eager before DSpark and P1/P2.
-- **B2**: adaptive DSpark before device-resident FIA lengths and fused prolog.
-- **B3**: current final path.
+- **Generic BF16**: eager autoregressive target with generic operator flow.
+- **MXFP autoregressive**: quantized target before DSpark and graph/fusion work.
+- **DSpark before fusion**: adaptive DSpark before device-resident FIA lengths
+  and the fused prolog.
+- **Gemma4-A5 final**: the complete optimized path in this change set.
 
-All B3/B0 values include target weight quantization, DSpark, graph/control-flow
-work, the target projection change, and the A4B MegaMoe path where applicable.
-B3/B1 isolates the speculative and graph/fusion stack from target
-quantization. B3/B2 isolates P1/P2.
+Final/Generic values include target weight quantization, DSpark,
+graph/control-flow work, the target projection change, and the A4B MegaMoe
+path where applicable. Final/MXFP isolates the speculative and graph/fusion
+stack from target quantization. Final/DSpark-before-fusion isolates P1/P2.
 
 ## Implemented optimization ledger
 
@@ -34,8 +35,9 @@ quantization. B3/B2 isolates P1/P2.
 
 The SWA/global 5:1 pattern is part of Gemma 4 rather than an incremental PR
 gain. It is nevertheless essential to the engine: at 32k it reads 8.38x less
-KV data than treating all layers as global. Do not add 8.38x to B3/B0 because
-B0 already executes the same model architecture.
+KV data than treating all layers as global. Do not add 8.38x to the final versus
+generic gain because the generic configuration already executes the same model
+architecture.
 
 ## Independent bounds
 
@@ -74,7 +76,7 @@ host shares because KV attention occupies more of the step. A4B assumes
 
 ### Decode-heavy 128/512
 
-Expected B3/B0 output-throughput (equivalently inverse-TPOT) curve:
+Expected Final/Generic output-throughput (equivalently inverse-TPOT) curve:
 
 | Concurrency | 1 | 4 | 8 | 16 | 32 | 64 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -85,13 +87,13 @@ Expected B3/B0 output-throughput (equivalently inverse-TPOT) curve:
 
 The curve falls with concurrency because BF16 weight reads and launch gaps are
 already amortized by batching. A4B retains more high-concurrency benefit from
-expert communication overlap. B3/B1 is the fairer comparison when production
+expert communication overlap. Final/MXFP is the fairer comparison when production
 already uses MXFP: for decode-heavy requests, the request-level central curve
 is about 2.24/2.12/1.98/1.78/1.56/1.36x for C1/4/8/16/32/64.
 
 ### End-to-end request curve
 
-These central B3/B0 values combine TTFT and decode through the stated baseline
+These central Final/Generic values combine TTFT and decode through the stated baseline
 time shares; they are not simple token-count averages.
 
 | Workload | Decode share | C1 | C8 | C16 | C32 | C64 |
@@ -112,7 +114,7 @@ dominates TTFT. For a serving trace with different phase shares, rerun
 
 ### P1/P2-only curve
 
-B3/B2 isolates the two newest changes. The central request-level curve ranges
+Final/DSpark-before-fusion isolates the two newest changes. The central request-level curve ranges
 from 1.108x at 31B C1 decode-heavy to 1.011x at 31B C64/32k, and from 1.102x
 to 1.010x for A4B. It is largest at low concurrency and short context, where
 two host synchronizations and four removed logical launch gaps per global

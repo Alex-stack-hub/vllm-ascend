@@ -201,11 +201,12 @@ python benchmarks/gemma4_a5/theory.py 26b-a4b --draft-cost-ratio 0.10 \
   --absolute --format markdown
 ```
 
-The curve model names four baselines explicitly: B0 is BF16 eager
-autoregressive serving, B1 is MXFP target eager, B2 is adaptive DSpark before
-the P1/P2 device-metadata and FIA-prolog changes, and B3 is the current final
-path. The JSON form emits every central Amdahl assumption so A5 profiler shares
-can replace them without changing the formulas. See
+The curve model names four configurations explicitly: Generic BF16 is eager
+autoregressive serving, MXFP autoregressive is the quantized target without
+speculation, DSpark before fusion excludes the P1/P2 device-metadata and
+FIA-prolog changes, and Gemma4-A5 final is the complete path. The JSON form
+emits every central Amdahl assumption so A5 profiler shares can replace them
+without changing the formulas. See
 [`THEORETICAL_BASELINE.md`](THEORETICAL_BASELINE.md) for the complete workload
 interpretation, uncertainty bands, and expected curves.
 The hardware contract, formulas and all original-versus-optimized absolute

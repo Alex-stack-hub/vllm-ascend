@@ -28,14 +28,42 @@ the measured BF16 roofline when hardware is available.
 
 - Dense 31B topology: one eight-card node, TP=8.
 - 26B-A4B topology: one eight-card node, TP/EP=8.
-- B0 original: BF16 eager autoregressive target and generic operator flow.
-- B3 optimized: mixed MXFP target/draft, DSpark, FULL graph, device-resident
-  adaptive lengths, fused FIA prolog/KV write, plus MegaMoe for A4B.
 - Prefix cache is off. There is no external queue. Every row is a synchronized
   closed batch of equal-length requests, admitted without scheduler throttling.
 - TTFT is the batch prefill time; TPOT is the per-request inter-token interval;
   `tok/s` is aggregate output throughput; `req/s` includes prompt plus all
   output tokens.
+
+Approximate weight traffic before allocator alignment and runtime buffers:
+
+| Model | BF16 total weights | Mixed total weights | BF16 active weights/token | Mixed active weights/token |
+| --- | ---: | ---: | ---: | ---: |
+| Gemma 4 31B | 62.0 GB | 20.8 GB | 62.0 GB | 20.8 GB |
+| Gemma 4 26B-A4B | 52.0 GB | 16.4 GB | 8.0 GB | 2.5 GB |
+
+The performance model assumes that `max_num_batched_tokens`, `max_num_seqs`
+and graph buckets admit the stated concurrency. It does not infer KV-cache
+capacity from the raw 1.152 TB HBM total because model residency, runtime
+workspace, graph pools, block size, KV dtype and reserved-memory policy must be
+measured from the final deployment. Capacity admission is therefore a separate
+gate from the throughput forecast.
+
+## Comparison configurations
+
+The report uses configuration names instead of abstract baseline numbers. The
+four configurations are a reproducible ablation ladder:
+
+| Configuration | Target weights | Decode algorithm | Graph and metadata | Attention/MoE operators | Comparison purpose |
+| --- | --- | --- | --- | --- | --- |
+| Generic BF16 | BF16 | Ordinary autoregressive | Eager, host-built lengths | Generic QKV, RoPE and KV-write flow | Hardware-neutral reference |
+| MXFP autoregressive | MXFP8 attention/FC, MXFP4 MLP/expert | Ordinary autoregressive | Eager, host-built lengths | K=V projection and MegaMoe where applicable | Fair optimized-weight production baseline |
+| DSpark before fusion | Same as MXFP autoregressive | Seven-token adaptive DSpark | Before device-length and end-to-end graph work | Before fused FIA prolog/KV write | Isolates speculative decoding |
+| Gemma4-A5 final | Same as MXFP autoregressive | Seven-token adaptive DSpark | FULL graph and device-resident adaptive lengths | Fused FIA prolog/KV write and MegaMoe | Proposed final engine |
+
+Use **Final versus Generic BF16** for the complete engine transformation. Use
+**Final versus MXFP autoregressive** when the existing service is already
+quantized. Use **Final versus DSpark before fusion** to isolate the newest
+scheduler/graph and FIA-prolog/KV-write work.
 
 ## Workloads
 
@@ -51,24 +79,67 @@ low concurrency benefits most from quantization, speculative decoding and
 graph/launch removal; high concurrency amortizes the original weight read and
 becomes increasingly limited by compute, KV traffic and communication.
 
+## Metric definitions
+
+| Metric | Definition | Included | Not included |
+| --- | --- | --- | --- |
+| TTFT | Time from admitted batch start to first generated token | Prompt compute, attention, fixed scheduler/launch intercept | Queueing before admission, network latency, tokenization |
+| TPOT | Mean time between output tokens for one request in the batch | Target/draft steps, graph, operator and communication model | Client streaming overhead |
+| Output tok/s | Aggregate generated tokens per second across the batch | Decode only | Prompt tokens |
+| Request/s | Concurrency divided by closed-batch completion time | TTFT plus all requested output tokens | Open-loop queueing and mixed-length early completion |
+
+The model intentionally does not publish p95/p99 latency. Tail latency requires
+measured scheduler queueing, graph-bucket distribution, expert imbalance and
+runtime variance; deriving it from a roofline would not be defensible.
+
+## Ablation summary at representative points
+
+| Model and workload | C | Generic BF16 req/s | MXFP AR req/s | DSpark pre-fusion req/s | Final req/s | Final/Generic | Final/MXFP AR | Final/DSpark |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 31B, decode 128/512 | 1 | 0.51 | 1.12 | 2.55 | 2.84 | 5.57x | 2.53x | 1.11x |
+| 31B, decode 128/512 | 16 | 9.63 | 14.19 | 24.83 | 26.39 | 2.74x | 1.86x | 1.06x |
+| 31B, decode 128/512 | 64 | 31.77 | 37.77 | 49.41 | 51.24 | 1.61x | 1.36x | 1.04x |
+| 31B, balanced 2k/256 | 16 | 8.37 | 11.72 | 14.27 | 14.84 | 1.77x | 1.27x | 1.04x |
+| 31B, long 8k/128 | 16 | 3.20 | 3.89 | 4.01 | 4.11 | 1.28x | 1.06x | 1.02x |
+| 31B, long 32k/128 | 16 | 0.76 | 0.82 | 0.82 | 0.84 | 1.10x | 1.02x | 1.01x |
+| A4B, decode 128/512 | 1 | 1.61 | 2.58 | 4.01 | 5.47 | 3.40x | 2.12x | 1.36x |
+| A4B, decode 128/512 | 16 | 8.04 | 14.94 | 27.19 | 28.84 | 3.59x | 1.93x | 1.06x |
+| A4B, decode 128/512 | 64 | 31.11 | 46.39 | 63.02 | 65.19 | 2.10x | 1.41x | 1.03x |
+| A4B, balanced 2k/256 | 16 | 13.02 | 23.55 | 36.71 | 38.48 | 2.96x | 1.63x | 1.05x |
+| A4B, long 8k/128 | 16 | 10.60 | 16.67 | 19.20 | 19.71 | 1.86x | 1.18x | 1.03x |
+| A4B, long 32k/128 | 16 | 2.93 | 3.97 | 4.11 | 4.17 | 1.42x | 1.05x | 1.01x |
+
+Across all 24 rows per model, the request-throughput gain ranges are:
+
+| Model | Final/Generic BF16 | Final/MXFP autoregressive | Final/DSpark before fusion |
+| --- | ---: | ---: | ---: |
+| Gemma 4 31B | 1.08-5.57x | 1.01-2.53x | 1.009-1.138x |
+| Gemma 4 26B-A4B | 1.39-5.58x | 1.01-2.39x | 1.008-1.365x |
+
+The upper end is short/decode-heavy and low-to-medium concurrency. The lower
+end is 32k prefill or saturated batching. The scheduler/graph and fused-prolog
+increment is intentionally reported separately: it is modest end to end in
+long-prefill traffic but removes serial synchronization and launch work from
+every applicable decode step.
+
 ## Model equations and assumptions
 
-For each batch, the B0 output-token roofline is the minimum of HBM and BF16
+For each batch, the Generic BF16 output-token roofline is the minimum of HBM and BF16
 compute limits:
 
 ```text
-B0 decode tok/s = min(
+Generic BF16 decode tok/s = min(
   C * aggregate_HBM_BW * HBM_eff(C) * topology_eff(C) / BF16_weight_union(C),
   aggregate_BF16_FLOPS * cube_eff(C) * topology_eff(C) / (2 * active_params)
 )
 ```
 
-The B3 value is the minimum of the calibrated relative curve, mixed-precision
+The final-engine value is the minimum of the calibrated relative curve, mixed-precision
 HBM and compute roofs, and a graph-replay step-latency floor:
 
 ```text
-B3 decode tok/s = min(
-  B0 * calibrated_B3/B0_decode,
+Final decode tok/s = min(
+  Generic BF16 * calibrated final/generic decode gain,
   mixed_HBM_roof * ideal_speculative_ceiling,
   mixed_compute_roof * ideal_speculative_ceiling,
   C / minimum_batch_step_latency
@@ -77,7 +148,7 @@ B3 decode tok/s = min(
 
 Prompt FLOPs include active-weight linear work and the real Gemma 4 pattern of
 five 1024-token sliding layers followed by one global layer. Batch TTFT is
-prompt FLOPs divided by effective BF16 throughput plus a 6 ms fixed term. B3
+prompt FLOPs divided by effective BF16 throughput plus a 6 ms fixed term. Final
 TTFT applies only the calibrated prefill-side gains; speculative decoding is
 not credited to prompt processing.
 
@@ -91,82 +162,83 @@ not credited to prompt processing.
 | A4B prefill Cube efficiency | 32% | 38% | 42% | 45% | 47% | 48% |
 
 The A4B batch weight union is `min(26B total, 4B active * concurrency)`;
-different requests may route to different experts. The B3 single-stream target
-step floors are 0.55 ms for 31B and 0.35 ms for A4B, increasing 6% per doubled
-concurrency. These are calibration assumptions, not hardware specifications.
+different requests may route to different experts. The effective single-stream
+TPOT floors for Generic/MXFP/DSpark-pre-fusion/Final are 2.50/1.20/0.75/0.55 ms
+for 31B and 1.20/0.75/0.48/0.35 ms for A4B, increasing 6% per doubled
+concurrency. These are visible calibration assumptions, not hardware specifications.
 Use a central-value planning band of -25%/+20% for throughput and the inverse
 band for latency until measurements replace the efficiency and floor terms.
 
 ## 31B dense result
 
-| Workload | C | B0 TTFT ms | B3 TTFT ms | B0 TPOT ms | B3 TPOT ms | B0 tok/s | B3 tok/s | B0 req/s | B3 req/s |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| decode-128-512 | 1 | 11.8 | 6.9 | 3.81 | 0.68 | 262 | 1481 | 0.51 | 2.84 |
-| decode-128-512 | 4 | 25.7 | 15.9 | 3.39 | 0.74 | 1179 | 5436 | 2.27 | 10.19 |
-| decode-128-512 | 8 | 42.0 | 26.6 | 3.17 | 0.85 | 2527 | 9455 | 4.81 | 17.40 |
-| decode-128-512 | 16 | 74.1 | 47.9 | 3.04 | 1.07 | 5265 | 14966 | 9.82 | 26.88 |
-| decode-128-512 | 32 | 138.9 | 91.8 | 3.00 | 1.42 | 10683 | 22535 | 19.13 | 39.08 |
-| decode-128-512 | 64 | 273.6 | 184.1 | 3.03 | 1.85 | 21127 | 34533 | 35.08 | 56.49 |
-| balanced-2k-256 | 1 | 100.4 | 66.1 | 3.81 | 0.70 | 262 | 1422 | 0.93 | 4.06 |
-| balanced-2k-256 | 4 | 328.6 | 225.0 | 3.39 | 0.76 | 1179 | 5262 | 3.34 | 9.53 |
-| balanced-2k-256 | 8 | 594.5 | 414.6 | 3.17 | 0.87 | 2527 | 9210 | 5.69 | 12.56 |
-| balanced-2k-256 | 16 | 1118.9 | 793.9 | 3.04 | 1.09 | 5265 | 14679 | 8.43 | 14.91 |
-| balanced-2k-256 | 32 | 2179.2 | 1571.3 | 3.00 | 1.44 | 10683 | 22240 | 10.86 | 16.50 |
-| balanced-2k-256 | 64 | 4381.7 | 3204.8 | 3.03 | 1.87 | 21127 | 34219 | 12.41 | 17.37 |
-| long-8k-128 | 1 | 395.6 | 307.4 | 3.81 | 0.83 | 262 | 1211 | 1.13 | 2.42 |
-| long-8k-128 | 4 | 1337.3 | 1063.2 | 3.39 | 0.87 | 1179 | 4624 | 2.26 | 3.41 |
-| long-8k-128 | 8 | 2434.8 | 1957.1 | 3.17 | 0.96 | 2527 | 8297 | 2.82 | 3.85 |
-| long-8k-128 | 16 | 4598.7 | 3736.8 | 3.04 | 1.18 | 5265 | 13602 | 3.21 | 4.12 |
-| long-8k-128 | 32 | 8974.5 | 7367.5 | 3.00 | 1.51 | 10683 | 21149 | 3.42 | 4.23 |
-| long-8k-128 | 64 | 18063.7 | 14961.8 | 3.03 | 1.93 | 21127 | 33113 | 3.47 | 4.21 |
-| long-32k-128 | 1 | 1756.1 | 1577.3 | 3.81 | 1.14 | 262 | 880 | 0.45 | 0.58 |
-| long-32k-128 | 4 | 5985.5 | 5430.9 | 3.39 | 1.13 | 1179 | 3534 | 0.62 | 0.72 |
-| long-32k-128 | 8 | 10915.3 | 9956.7 | 3.17 | 1.21 | 2527 | 6634 | 0.71 | 0.79 |
-| long-32k-128 | 16 | 20634.4 | 18931.0 | 3.04 | 1.39 | 5265 | 11494 | 0.76 | 0.84 |
-| long-32k-128 | 32 | 40289.2 | 37165.9 | 3.00 | 1.69 | 10683 | 18883 | 0.79 | 0.86 |
-| long-32k-128 | 64 | 81114.4 | 75166.6 | 3.03 | 2.08 | 21127 | 30776 | 0.79 | 0.85 |
+| Workload | C | Generic TTFT ms | Final TTFT ms | Generic TPOT ms | Final TPOT ms | Generic tok/s | Final tok/s | Generic req/s | Final req/s | Req/s gain |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| decode-128-512 | 1 | 11.8 | 6.9 | 3.81 | 0.68 | 262 | 1481 | 0.51 | 2.84 | 5.57x |
+| decode-128-512 | 4 | 25.7 | 15.9 | 3.39 | 0.74 | 1179 | 5436 | 2.27 | 10.19 | 4.49x |
+| decode-128-512 | 8 | 42.0 | 26.6 | 3.17 | 0.85 | 2527 | 9455 | 4.81 | 17.40 | 3.62x |
+| decode-128-512 | 16 | 74.1 | 47.9 | 3.10 | 1.09 | 5161 | 14672 | 9.63 | 26.39 | 2.74x |
+| decode-128-512 | 32 | 138.9 | 91.8 | 3.25 | 1.54 | 9846 | 20771 | 17.75 | 36.34 | 2.05x |
+| decode-128-512 | 64 | 273.6 | 184.1 | 3.40 | 2.08 | 18824 | 30767 | 31.77 | 51.24 | 1.61x |
+| balanced-2k-256 | 1 | 100.4 | 66.1 | 3.81 | 0.70 | 262 | 1422 | 0.93 | 4.06 | 4.37x |
+| balanced-2k-256 | 4 | 328.6 | 225.0 | 3.39 | 0.76 | 1179 | 5262 | 3.34 | 9.53 | 2.85x |
+| balanced-2k-256 | 8 | 594.5 | 414.6 | 3.17 | 0.87 | 2527 | 9210 | 5.69 | 12.56 | 2.21x |
+| balanced-2k-256 | 16 | 1118.9 | 793.9 | 3.10 | 1.11 | 5161 | 14392 | 8.37 | 14.84 | 1.77x |
+| balanced-2k-256 | 32 | 2179.2 | 1571.3 | 3.25 | 1.56 | 9846 | 20499 | 10.63 | 16.24 | 1.53x |
+| balanced-2k-256 | 64 | 4381.7 | 3204.8 | 3.40 | 2.10 | 18824 | 30487 | 12.19 | 17.10 | 1.40x |
+| long-8k-128 | 1 | 395.6 | 307.4 | 3.81 | 0.83 | 262 | 1211 | 1.13 | 2.42 | 2.14x |
+| long-8k-128 | 4 | 1337.3 | 1063.2 | 3.39 | 0.87 | 1179 | 4624 | 2.26 | 3.41 | 1.51x |
+| long-8k-128 | 8 | 2434.8 | 1957.1 | 3.17 | 0.96 | 2527 | 8297 | 2.82 | 3.85 | 1.37x |
+| long-8k-128 | 16 | 4598.7 | 3736.8 | 3.10 | 1.20 | 5161 | 13335 | 3.20 | 4.11 | 1.28x |
+| long-8k-128 | 32 | 8974.5 | 7367.5 | 3.25 | 1.64 | 9846 | 19493 | 3.41 | 4.22 | 1.24x |
+| long-8k-128 | 64 | 18063.7 | 14961.8 | 3.40 | 2.17 | 18824 | 29502 | 3.46 | 4.20 | 1.21x |
+| long-32k-128 | 1 | 1756.1 | 1577.3 | 3.81 | 1.14 | 262 | 880 | 0.45 | 0.58 | 1.30x |
+| long-32k-128 | 4 | 5985.5 | 5430.9 | 3.39 | 1.13 | 1179 | 3534 | 0.62 | 0.72 | 1.15x |
+| long-32k-128 | 8 | 10915.3 | 9956.7 | 3.17 | 1.21 | 2527 | 6634 | 0.71 | 0.79 | 1.12x |
+| long-32k-128 | 16 | 20634.4 | 18931.0 | 3.10 | 1.42 | 5161 | 11268 | 0.76 | 0.84 | 1.10x |
+| long-32k-128 | 32 | 40289.2 | 37165.9 | 3.25 | 1.84 | 9846 | 17405 | 0.79 | 0.86 | 1.09x |
+| long-32k-128 | 64 | 81114.4 | 75166.6 | 3.40 | 2.33 | 18824 | 27420 | 0.78 | 0.85 | 1.08x |
 
 Representative crossover points:
 
 - Single-stream decode-heavy output grows from 262 to 1,481 tok/s and TPOT
   falls from 3.81 to 0.68 ms.
-- Balanced C16 grows from 8.43 to 14.91 req/s; aggregate decode throughput
-  grows from 5,265 to 14,679 tok/s.
+- Balanced C16 grows from 8.37 to 14.84 req/s; aggregate decode throughput
+  grows from 5,161 to 14,392 tok/s.
 - At 32k/C16, request throughput grows only from 0.76 to 0.84 req/s because
   long global-attention prefill dominates the complete request.
 
 ## 26B-A4B result
 
-| Workload | C | B0 TTFT ms | B3 TTFT ms | B0 TPOT ms | B3 TPOT ms | B0 tok/s | B3 tok/s | B0 req/s | B3 req/s |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| decode-128-512 | 1 | 7.1 | 3.6 | 0.67 | 0.35 | 1500 | 2857 | 2.87 | 5.47 |
-| decode-128-512 | 4 | 9.8 | 5.0 | 2.39 | 0.42 | 1670 | 9469 | 3.24 | 18.07 |
-| decode-128-512 | 8 | 13.2 | 6.8 | 3.85 | 0.82 | 2076 | 9762 | 4.03 | 18.76 |
-| decode-128-512 | 16 | 20.3 | 10.5 | 3.85 | 1.06 | 4159 | 15051 | 8.04 | 28.84 |
-| decode-128-512 | 32 | 35.2 | 18.2 | 3.87 | 1.43 | 8271 | 22441 | 15.87 | 42.77 |
-| decode-128-512 | 64 | 65.1 | 34.1 | 3.89 | 1.85 | 16447 | 34579 | 31.11 | 65.19 |
-| balanced-2k-256 | 1 | 23.9 | 13.6 | 0.67 | 0.35 | 1500 | 2857 | 5.14 | 9.69 |
-| balanced-2k-256 | 4 | 68.7 | 39.5 | 2.39 | 0.44 | 1670 | 9159 | 5.87 | 26.44 |
-| balanced-2k-256 | 8 | 126.1 | 71.7 | 3.85 | 0.84 | 2076 | 9506 | 7.19 | 27.86 |
-| balanced-2k-256 | 16 | 244.3 | 138.4 | 3.85 | 1.08 | 4159 | 14763 | 13.02 | 38.48 |
-| balanced-2k-256 | 32 | 492.7 | 278.5 | 3.87 | 1.44 | 8271 | 22153 | 21.57 | 49.36 |
-| balanced-2k-256 | 64 | 992.0 | 565.5 | 3.89 | 1.87 | 16447 | 34277 | 32.19 | 61.33 |
-| long-8k-128 | 1 | 81.8 | 55.1 | 0.67 | 0.35 | 1500 | 2857 | 5.98 | 10.01 |
-| long-8k-128 | 4 | 271.9 | 182.1 | 2.39 | 0.50 | 1670 | 8011 | 6.92 | 16.26 |
-| long-8k-128 | 8 | 515.5 | 339.0 | 3.85 | 0.94 | 2076 | 8537 | 7.93 | 17.43 |
-| long-8k-128 | 16 | 1016.4 | 661.7 | 3.85 | 1.17 | 4159 | 13659 | 10.60 | 19.71 |
-| long-8k-128 | 32 | 2069.9 | 1336.6 | 3.87 | 1.52 | 8271 | 21058 | 12.48 | 20.90 |
-| long-8k-128 | 64 | 4187.1 | 2711.2 | 3.89 | 1.93 | 16447 | 33177 | 13.66 | 21.64 |
-| long-32k-128 | 1 | 377.9 | 294.9 | 0.67 | 0.35 | 1500 | 2857 | 2.16 | 2.94 |
-| long-32k-128 | 4 | 1310.7 | 1004.5 | 2.39 | 0.66 | 1670 | 6067 | 2.47 | 3.67 |
-| long-32k-128 | 8 | 2505.8 | 1874.7 | 3.85 | 1.18 | 2076 | 6781 | 2.67 | 3.95 |
-| long-32k-128 | 16 | 4964.0 | 3657.1 | 3.85 | 1.39 | 4159 | 11494 | 2.93 | 4.17 |
-| long-32k-128 | 32 | 10133.0 | 7369.1 | 3.87 | 1.71 | 8271 | 18763 | 3.01 | 4.22 |
-| long-32k-128 | 64 | 20521.9 | 14899.3 | 3.89 | 2.08 | 16447 | 30807 | 3.04 | 4.22 |
+| Workload | C | Generic TTFT ms | Final TTFT ms | Generic TPOT ms | Final TPOT ms | Generic tok/s | Final tok/s | Generic req/s | Final req/s | Req/s gain |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| decode-128-512 | 1 | 7.1 | 3.6 | 1.20 | 0.35 | 833 | 2857 | 1.61 | 5.47 | 3.40x |
+| decode-128-512 | 4 | 9.8 | 5.0 | 2.39 | 0.42 | 1670 | 9469 | 3.24 | 18.07 | 5.58x |
+| decode-128-512 | 8 | 13.2 | 6.8 | 3.85 | 0.82 | 2076 | 9762 | 4.03 | 18.76 | 4.66x |
+| decode-128-512 | 16 | 20.3 | 10.5 | 3.85 | 1.06 | 4159 | 15051 | 8.04 | 28.84 | 3.59x |
+| decode-128-512 | 32 | 35.2 | 18.2 | 3.87 | 1.43 | 8271 | 22441 | 15.87 | 42.77 | 2.69x |
+| decode-128-512 | 64 | 65.1 | 34.1 | 3.89 | 1.85 | 16447 | 34579 | 31.11 | 65.19 | 2.10x |
+| balanced-2k-256 | 1 | 23.9 | 13.6 | 1.20 | 0.35 | 833 | 2857 | 3.02 | 9.69 | 3.21x |
+| balanced-2k-256 | 4 | 68.7 | 39.5 | 2.39 | 0.44 | 1670 | 9159 | 5.87 | 26.44 | 4.51x |
+| balanced-2k-256 | 8 | 126.1 | 71.7 | 3.85 | 0.84 | 2076 | 9506 | 7.19 | 27.86 | 3.88x |
+| balanced-2k-256 | 16 | 244.3 | 138.4 | 3.85 | 1.08 | 4159 | 14763 | 13.02 | 38.48 | 2.96x |
+| balanced-2k-256 | 32 | 492.7 | 278.5 | 3.87 | 1.44 | 8271 | 22153 | 21.57 | 49.36 | 2.29x |
+| balanced-2k-256 | 64 | 992.0 | 565.5 | 3.89 | 1.87 | 16447 | 34277 | 32.19 | 61.33 | 1.91x |
+| long-8k-128 | 1 | 81.8 | 55.1 | 1.20 | 0.35 | 833 | 2857 | 4.25 | 10.01 | 2.36x |
+| long-8k-128 | 4 | 271.9 | 182.1 | 2.39 | 0.50 | 1670 | 8011 | 6.92 | 16.26 | 2.35x |
+| long-8k-128 | 8 | 515.5 | 339.0 | 3.85 | 0.94 | 2076 | 8537 | 7.93 | 17.43 | 2.20x |
+| long-8k-128 | 16 | 1016.4 | 661.7 | 3.85 | 1.17 | 4159 | 13659 | 10.60 | 19.71 | 1.86x |
+| long-8k-128 | 32 | 2069.9 | 1336.6 | 3.87 | 1.52 | 8271 | 21058 | 12.48 | 20.90 | 1.68x |
+| long-8k-128 | 64 | 4187.1 | 2711.2 | 3.89 | 1.93 | 16447 | 33177 | 13.66 | 21.64 | 1.58x |
+| long-32k-128 | 1 | 377.9 | 294.9 | 1.20 | 0.35 | 833 | 2857 | 1.88 | 2.94 | 1.56x |
+| long-32k-128 | 4 | 1310.7 | 1004.5 | 2.39 | 0.66 | 1670 | 6067 | 2.47 | 3.67 | 1.49x |
+| long-32k-128 | 8 | 2505.8 | 1874.7 | 3.85 | 1.18 | 2076 | 6781 | 2.67 | 3.95 | 1.48x |
+| long-32k-128 | 16 | 4964.0 | 3657.1 | 3.85 | 1.39 | 4159 | 11494 | 2.93 | 4.17 | 1.42x |
+| long-32k-128 | 32 | 10133.0 | 7369.1 | 3.87 | 1.71 | 8271 | 18763 | 3.01 | 4.22 | 1.40x |
+| long-32k-128 | 64 | 20521.9 | 14899.3 | 3.89 | 2.08 | 16447 | 30807 | 3.04 | 4.22 | 1.39x |
 
 Representative crossover points:
 
-- The single-stream B3 value is capped by the 0.35 ms target-step floor,
+- The single-stream final value is capped by the 0.35 ms effective TPOT floor,
   giving 2,857 tok/s instead of the 10k+ bandwidth-only artifact.
 - Balanced C16 grows from 13.02 to 38.48 req/s; aggregate decode throughput
   grows from 4,159 to 14,763 tok/s.
@@ -196,3 +268,23 @@ because both paths can reuse the same prefix. For a measured hit rate `h`, the
 first-order cached prefill estimate is `fixed + (uncached - fixed) * (1-h)`;
 validate it separately because block alignment, suffix length and scheduler
 overlap determine the realized TTFT.
+
+## Measurement and acceptance contract
+
+1. Run the four named configurations with the same checkpoint, tokenizer,
+   request corpus, scheduler limits, graph buckets, visible devices and KV
+   cache settings. Do not compare BF16 Generic against a different model or
+   different prompt distribution.
+2. Warm graph and operator caches, then report the median of at least three
+   steady-state runs. Publish TTFT, TPOT, output tok/s and completed req/s
+   together; one metric alone cannot identify the limiting phase.
+3. Treat the -25%/+20% central band as a calibration envelope, not a product
+   SLA. A result outside it requires replacing the corresponding efficiency or
+   latency-floor input with profiler evidence; it does not justify silently
+   moving the target.
+4. For Final versus DSpark-before-fusion, accompany end-to-end numbers with
+   structural evidence: zero adaptive-length D2H copies, one fused prolog
+   launch per global layer, no duplicate generic KV write, and no graph
+   recapture after warmup.
+5. Report measured p50/p95/p99 separately. This model only predicts central
+   closed-batch values and must not be cited as a tail-latency result.

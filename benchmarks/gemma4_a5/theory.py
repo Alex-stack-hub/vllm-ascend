@@ -83,9 +83,19 @@ A4B_PREFILL_CUBE_EFFICIENCY = {1: 0.32, 4: 0.38, 8: 0.42, 16: 0.45, 32: 0.47, 64
 # that does not scale with prompt tokens. It is deliberately visible so a
 # measured intercept can replace it without changing the roofline equations.
 PREFILL_FIXED_OVERHEAD_SECONDS = 0.006
-B3_SINGLE_STREAM_STEP_FLOOR_SECONDS = {
-    "31b": 0.00055,
-    "26b-a4b": 0.00035,
+EFFECTIVE_TPOT_FLOOR_SECONDS = {
+    "31b": {
+        "generic_bf16": 0.00250,
+        "mxfp_ar": 0.00120,
+        "dspark_prefusion": 0.00075,
+        "gemma4_a5_final": 0.00055,
+    },
+    "26b-a4b": {
+        "generic_bf16": 0.00120,
+        "mxfp_ar": 0.00075,
+        "dspark_prefusion": 0.00048,
+        "gemma4_a5_final": 0.00035,
+    },
 }
 
 
@@ -185,12 +195,12 @@ def architecture_report(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def expected_curve(args: argparse.Namespace, bounds: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return central expected curves for three explicit baselines.
+    """Return central expected curves for four explicit configurations.
 
-    B0: BF16 eager autoregressive target, generic operator flow.
-    B1: MXFP target eager, before DSpark and P1/P2.
-    B2: adaptive DSpark before device-length and FIA-prolog fusion.
-    B3: current final path.
+    Generic BF16: eager autoregressive target with generic operator flow.
+    MXFP autoregressive: quantized target before DSpark and P1/P2.
+    DSpark before fusion: adaptive DSpark before device-length and prolog fusion.
+    Gemma4-A5 final: current complete path.
     """
     cfg = MODELS[args.model]
     compression = bounds["weight_bandwidth_upper_bound"]["model_mix"]
@@ -338,6 +348,27 @@ def absolute_serving_report(
     ideal_spec = bounds["dspark"]["ideal_decode_speedup"]
     rows: list[dict[str, Any]] = []
 
+    def latency_ceiling(baseline: str, concurrency: int) -> float:
+        floor = EFFECTIVE_TPOT_FLOOR_SECONDS[args.model][baseline]
+        batch_floor = floor * (1.0 + 0.06 * math.log2(concurrency))
+        return concurrency / batch_floor
+
+    def result_values(
+        prefill_seconds: float,
+        decode_tokens_per_second: float,
+        concurrency: int,
+        output_tokens: int,
+    ) -> dict[str, float]:
+        tpot_seconds = concurrency / decode_tokens_per_second
+        batch_latency = prefill_seconds + output_tokens * tpot_seconds
+        return {
+            "ttft_ms": 1000.0 * prefill_seconds,
+            "tpot_ms": 1000.0 * tpot_seconds,
+            "output_tokens_per_second": decode_tokens_per_second,
+            "requests_per_second": concurrency / batch_latency,
+            "closed_batch_latency_seconds": batch_latency,
+        }
+
     for row in curve:
         concurrency = row["concurrency"]
         prompt_tokens = row["input_tokens"]
@@ -353,80 +384,96 @@ def absolute_serving_report(
 
         bf16_batch_weight_bytes = _batch_weight_bytes(cfg, concurrency, 2.0)
         mixed_batch_weight_bytes = _batch_weight_bytes(cfg, concurrency, mixed_bytes_per_parameter)
-        b0_memory_tokens_per_second = (
+        bf16_memory_ceiling = (
             concurrency * aggregate_bandwidth * hbm_efficiency * topology_efficiency / bf16_batch_weight_bytes
         )
-        b0_compute_tokens_per_second = (
+        bf16_compute_ceiling = (
             aggregate_bf16_flops * prefill_efficiency * topology_efficiency / (2.0 * cfg["active_params"])
         )
-        b0_decode_tokens_per_second = min(
-            b0_memory_tokens_per_second,
-            b0_compute_tokens_per_second,
+        generic_decode = min(
+            bf16_memory_ceiling,
+            bf16_compute_ceiling,
+            latency_ceiling("generic_bf16", concurrency),
         )
 
-        b3_memory_ceiling = (
-            concurrency
-            * aggregate_bandwidth
-            * hbm_efficiency
-            * topology_efficiency
-            / mixed_batch_weight_bytes
-            * ideal_spec
+        quant_memory_ceiling = (
+            concurrency * aggregate_bandwidth * hbm_efficiency * topology_efficiency / mixed_batch_weight_bytes
         )
-        b3_compute_ceiling = (
-            aggregate_mixed_flops * prefill_efficiency * topology_efficiency / (2.0 * cfg["active_params"]) * ideal_spec
+        quant_compute_ceiling = (
+            aggregate_mixed_flops * prefill_efficiency * topology_efficiency / (2.0 * cfg["active_params"])
         )
-        b3_step_floor = B3_SINGLE_STREAM_STEP_FLOOR_SECONDS[args.model] * (1.0 + 0.06 * math.log2(concurrency))
-        b3_latency_ceiling = concurrency / b3_step_floor
-        decode_speedup = row["expected_speedup"]["b3_vs_b0_tpot_or_decode_throughput"]
-        b3_decode_tokens_per_second = min(
-            b0_decode_tokens_per_second * decode_speedup,
-            b3_memory_ceiling,
-            b3_compute_ceiling,
-            b3_latency_ceiling,
+        factors = row["central_factors"]
+        k_eq_v_target = 1.003
+        quant_decode = min(
+            generic_decode * factors["target_quant_decode"] * k_eq_v_target * factors["a4b_megamoe"],
+            quant_memory_ceiling,
+            quant_compute_ceiling,
+            latency_ceiling("mxfp_ar", concurrency),
+        )
+        dspark_decode = min(
+            quant_decode * factors["dspark_decode"],
+            quant_memory_ceiling * ideal_spec,
+            quant_compute_ceiling * ideal_spec,
+            latency_ceiling("dspark_prefusion", concurrency),
+        )
+        final_decode = min(
+            generic_decode * row["expected_speedup"]["b3_vs_b0_tpot_or_decode_throughput"],
+            quant_memory_ceiling * ideal_spec,
+            quant_compute_ceiling * ideal_spec,
+            latency_ceiling("gemma4_a5_final", concurrency),
         )
 
         prompt_flops = _prefill_flops(cfg, prompt_tokens, args.window)
-        b0_prefill_seconds = (
+        generic_prefill = (
             concurrency * prompt_flops / (aggregate_bf16_flops * prefill_efficiency * topology_efficiency)
             + PREFILL_FIXED_OVERHEAD_SECONDS
         )
-        ttft_speedup = row["expected_speedup"]["b3_vs_b0_ttft"]
-        b3_prefill_seconds = b0_prefill_seconds / ttft_speedup
+        quant_prefill_speedup = factors["target_quant_prefill"] * k_eq_v_target * factors["a4b_megamoe"]
+        quant_prefill = generic_prefill / quant_prefill_speedup
+        dspark_prefill = quant_prefill
+        final_prefill = dspark_prefill / factors["p1_p2_prefill"]
 
-        b0_tpot_seconds = concurrency / b0_decode_tokens_per_second
-        b3_tpot_seconds = concurrency / b3_decode_tokens_per_second
-        b0_batch_latency = b0_prefill_seconds + output_tokens * b0_tpot_seconds
-        b3_batch_latency = b3_prefill_seconds + output_tokens * b3_tpot_seconds
+        generic = result_values(generic_prefill, generic_decode, concurrency, output_tokens)
+        quant_ar = result_values(quant_prefill, quant_decode, concurrency, output_tokens)
+        dspark_prefusion = result_values(dspark_prefill, dspark_decode, concurrency, output_tokens)
+        final = result_values(final_prefill, final_decode, concurrency, output_tokens)
         rows.append(
             {
                 **{key: row[key] for key in ("workload", "input_tokens", "output_tokens", "concurrency")},
-                "b0": {
-                    "ttft_ms": 1000.0 * b0_prefill_seconds,
-                    "tpot_ms": 1000.0 * b0_tpot_seconds,
-                    "output_tokens_per_second": b0_decode_tokens_per_second,
-                    "requests_per_second": concurrency / b0_batch_latency,
-                    "closed_batch_latency_seconds": b0_batch_latency,
-                },
-                "b3": {
-                    "ttft_ms": 1000.0 * b3_prefill_seconds,
-                    "tpot_ms": 1000.0 * b3_tpot_seconds,
-                    "output_tokens_per_second": b3_decode_tokens_per_second,
-                    "requests_per_second": concurrency / b3_batch_latency,
-                    "closed_batch_latency_seconds": b3_batch_latency,
-                },
+                "generic_bf16": generic,
+                "mxfp_ar": quant_ar,
+                "dspark_prefusion": dspark_prefusion,
+                "gemma4_a5_final": final,
                 "realized_speedup": {
-                    "ttft": b0_prefill_seconds / b3_prefill_seconds,
-                    "tpot_or_output_throughput": b3_decode_tokens_per_second / b0_decode_tokens_per_second,
-                    "requests_per_second": b0_batch_latency / b3_batch_latency,
+                    "final_vs_generic_ttft": generic["ttft_ms"] / final["ttft_ms"],
+                    "final_vs_generic_tpot": generic["tpot_ms"] / final["tpot_ms"],
+                    "final_vs_generic_requests_per_second": (
+                        final["requests_per_second"] / generic["requests_per_second"]
+                    ),
+                    "final_vs_mxfp_ar_requests_per_second": (
+                        final["requests_per_second"] / quant_ar["requests_per_second"]
+                    ),
+                    "final_vs_dspark_prefusion_requests_per_second": (
+                        final["requests_per_second"] / dspark_prefusion["requests_per_second"]
+                    ),
                 },
                 "active_ceiling": {
-                    "b0": "memory" if b0_memory_tokens_per_second <= b0_compute_tokens_per_second else "compute",
-                    "b3": min(
+                    "generic_bf16": min(
                         (
-                            (b0_decode_tokens_per_second * decode_speedup, "relative-curve"),
-                            (b3_memory_ceiling, "memory"),
-                            (b3_compute_ceiling, "compute"),
-                            (b3_latency_ceiling, "step-latency"),
+                            (bf16_memory_ceiling, "memory"),
+                            (bf16_compute_ceiling, "compute"),
+                            (latency_ceiling("generic_bf16", concurrency), "effective-tpot"),
+                        )
+                    )[1],
+                    "gemma4_a5_final": min(
+                        (
+                            (
+                                generic_decode * row["expected_speedup"]["b3_vs_b0_tpot_or_decode_throughput"],
+                                "relative-curve",
+                            ),
+                            (quant_memory_ceiling * ideal_spec, "memory"),
+                            (quant_compute_ceiling * ideal_spec, "compute"),
+                            (latency_ceiling("gemma4_a5_final", concurrency), "effective-tpot"),
                         )
                     )[1],
                 },
@@ -447,6 +494,12 @@ def absolute_serving_report(
             "basis": "one-half of the published MXFP8 peak; replace with a measured BF16 roofline",
         },
         "topology": "TP=8" if not cfg["moe"] else "TP/EP=8",
+        "baselines": {
+            "generic_bf16": "BF16 eager autoregressive target with generic operator flow",
+            "mxfp_ar": "MXFP eager autoregressive target before speculative decoding",
+            "dspark_prefusion": "adaptive DSpark before device-length and FIA-prolog fusion",
+            "gemma4_a5_final": "final Gemma4 A5 path with graph and operator fusion",
+        },
         "single_chip_raw_weight_roofline_tokens_per_second": {
             "bf16_total_checkpoint": one_chip_bf16_dense,
             "mixed_precision_active_weights": one_chip_mixed_active,
@@ -456,8 +509,9 @@ def absolute_serving_report(
             "prefix_cache": False,
             "scheduler_admits_all_concurrent_requests": True,
             "fixed_prefill_overhead_ms": 1000.0 * PREFILL_FIXED_OVERHEAD_SECONDS,
-            "b3_single_stream_step_floor_ms": {
-                model: 1000.0 * floor for model, floor in B3_SINGLE_STREAM_STEP_FLOOR_SECONDS.items()
+            "effective_tpot_floor_ms": {
+                model: {baseline: 1000.0 * floor for baseline, floor in floors.items()}
+                for model, floors in EFFECTIVE_TPOT_FLOOR_SECONDS.items()
             },
             "dense_hbm_efficiency": DENSE_HBM_EFFICIENCY,
             "dense_tp_efficiency": DENSE_TP_EFFICIENCY,
@@ -475,10 +529,12 @@ def _markdown_matrix(model: str, rows: list[dict[str, Any]]) -> str:
     lines = [
         f"# {model} central expected speedup matrix",
         "",
-        "B0 = BF16 eager AR; B1 = MXFP eager AR; B2 = pre-P1/P2 adaptive DSpark; B3 = current final path.",
+        "Generic = BF16 eager AR; MXFP AR = quantized target; DSpark pre-fusion = before graph/prolog fusion; ",
+        "Final = current Gemma4 A5 path.",
         "All values are assumption-driven central estimates, not measurements.",
         "",
-        "| Workload | C | B3/B0 request | B3/B0 TTFT | B3/B0 decode | B3/B1 request | B3/B2 request |",
+        "| Workload | C | Final/Generic request | Final/Generic TTFT | Final/Generic decode | "
+        "Final/MXFP AR request | Final/DSpark pre-fusion request |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
@@ -498,22 +554,23 @@ def _markdown_absolute(report: dict[str, Any]) -> str:
     lines = [
         f"# {report['model']} theoretical serving forecast on {report['chips']}x950DT",
         "",
-        "B0 is BF16 eager AR; B3 is the final MXFP + DSpark + graph/fusion path.",
+        "Generic is BF16 eager AR; Final is the Gemma4 A5 MXFP + DSpark + graph/fusion path.",
         "Values are closed-batch planning estimates, not measurements.",
         "",
-        "| Workload | C | B0 TTFT ms | B3 TTFT ms | B0 TPOT ms | B3 TPOT ms | "
-        "B0 tok/s | B3 tok/s | B0 req/s | B3 req/s |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Workload | C | Generic TTFT ms | Final TTFT ms | Generic TPOT ms | Final TPOT ms | "
+        "Generic tok/s | Final tok/s | Generic req/s | Final req/s | Final/Generic req/s |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in report["curve"]:
-        b0 = row["b0"]
-        b3 = row["b3"]
+        generic = row["generic_bf16"]
+        final = row["gemma4_a5_final"]
         lines.append(
             f"| {row['workload']} | {row['concurrency']} | "
-            f"{b0['ttft_ms']:.1f} | {b3['ttft_ms']:.1f} | "
-            f"{b0['tpot_ms']:.2f} | {b3['tpot_ms']:.2f} | "
-            f"{b0['output_tokens_per_second']:.0f} | {b3['output_tokens_per_second']:.0f} | "
-            f"{b0['requests_per_second']:.2f} | {b3['requests_per_second']:.2f} |"
+            f"{generic['ttft_ms']:.1f} | {final['ttft_ms']:.1f} | "
+            f"{generic['tpot_ms']:.2f} | {final['tpot_ms']:.2f} | "
+            f"{generic['output_tokens_per_second']:.0f} | {final['output_tokens_per_second']:.0f} | "
+            f"{generic['requests_per_second']:.2f} | {final['requests_per_second']:.2f} | "
+            f"{row['realized_speedup']['final_vs_generic_requests_per_second']:.2f}x |"
         )
     return "\n".join(lines)
 
@@ -579,10 +636,10 @@ def main() -> None:
             {
                 "model": args.model,
                 "baselines": {
-                    "b0": "BF16 eager autoregressive target with generic operator flow",
-                    "b1": "MXFP target eager before DSpark and P1/P2",
-                    "b2": "adaptive DSpark before device-length and FIA-prolog fusion",
-                    "b3": "current final path",
+                    "generic_bf16": "BF16 eager autoregressive target with generic operator flow",
+                    "mxfp_ar": "MXFP target eager before DSpark and P1/P2",
+                    "dspark_prefusion": "adaptive DSpark before device-length and FIA-prolog fusion",
+                    "gemma4_a5_final": "current final path",
                 },
                 "assumptions": {
                     "decode_weight_fraction_by_concurrency": DECODE_WEIGHT_FRACTION,
