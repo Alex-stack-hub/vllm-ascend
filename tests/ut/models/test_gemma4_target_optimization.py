@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM
 
+import vllm_ascend.patch.worker.patch_gemma4 as patch_gemma4
 from vllm_ascend.models.gemma4_dspark import AscendGemma4DSparkModel
 from vllm_ascend.patch.worker.patch_gemma4 import (
     AscendGemma4Attention,
@@ -33,6 +34,13 @@ class _Scale(nn.Module):
 
     def forward(self, value):
         return value * self.scale
+
+
+class _Norm(nn.Module):
+    def __init__(self, size: int):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(size))
+        self.variance_epsilon = 1e-6
 
 
 class _Attention(nn.Module):
@@ -74,6 +82,41 @@ def test_k_eq_v_target_projects_once_but_normalizes_k_and_v_separately():
     torch.testing.assert_close(module.attn.key, torch.tensor([[11.0]]))
     torch.testing.assert_close(module.attn.value, torch.tensor([[9.0]]))
     torch.testing.assert_close(output, torch.tensor([[7.0, 8.0]]))
+
+
+def test_k_eq_v_target_uses_fused_fia_prolog_without_generic_kv_update(monkeypatch):
+    module = AscendGemma4Attention.__new__(AscendGemma4Attention)
+    nn.Module.__init__(module)
+    module.qkv_proj = _Linear(torch.ones(2, 6, dtype=torch.bfloat16))
+    module.num_heads = 2
+    module.num_kv_heads = 1
+    module.head_dim = 2
+    module.q_norm = _Norm(2)
+    module.k_norm = _Norm(2)
+    module.rotary_emb = nn.Module()
+    module.rotary_emb.register_buffer("_gemma4_fia_cos_sin_cache", torch.ones(8, 2))
+    module.attn = _Attention()
+    module.attn.layer_name = "model.layers.0.self_attn.attn"
+    module.o_proj = _Linear(torch.full((2, 4), 7.0))
+    module._use_fused_fia_prolog = True
+    calls = []
+
+    def fake_prolog(*args):
+        calls.append(args)
+        return torch.full((2, 4), 3.0, dtype=torch.bfloat16)
+
+    monkeypatch.setattr(patch_gemma4, "gemma4_fia_prolog", fake_prolog)
+    monkeypatch.setattr(
+        patch_gemma4,
+        "get_gemma4_fia_prolog_context",
+        lambda *_: (torch.empty(1), torch.empty(1), torch.empty(1, dtype=torch.int64)),
+    )
+    output = module(torch.arange(2, dtype=torch.int64), torch.zeros(2, 4))
+
+    assert len(calls) == 1
+    assert module.attn.key.shape == (0, 2)
+    assert module.attn.value.shape == (0, 2)
+    torch.testing.assert_close(output, torch.full((2, 4), 7.0))
 
 
 def test_k_eq_v_mapper_drops_only_the_duplicate_full_attention_v_shard():

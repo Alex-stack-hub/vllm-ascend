@@ -18,9 +18,15 @@ The dense and A4B paths share these optimizations:
    with one shared activation quantization.
 5. `dspark_draft_topk=64` limits sequential Markov corrections to the 64
    strongest backbone candidates. Target verification remains exact.
-6. FULL_DECODE_ONLY captures target verification and the complete parallel
-   draft step. Adaptive verification uses the trained confidence head to avoid
-   verifying low-confidence tail positions.
+6. FULL graph captures target verification and the complete parallel draft
+   step. Adaptive verification uses the trained confidence head to avoid
+   verifying low-confidence tail positions. For Gemma4 on A5, exact adaptive
+   query/KV lengths remain in persistent device buffers, removing both
+   per-target-step device-to-host length synchronizations.
+7. Full-attention layers use a fused FIA prolog. One AIV kernel performs Q/K
+   weighted RMSNorm, standard RoPE, V's weightless RMSNorm, and the paged
+   BBND K/V write. FIA then consumes Q plus the already updated cache, so the
+   generic reshape-and-cache path is skipped.
 
 The A4B path additionally enables EP and MegaMoe. MegaMoe fuses expert
 dispatch, MXFP GMM, gated tanh-GELU, the down projection, and expert combine.
@@ -133,9 +139,20 @@ Use these checks before accepting an end-to-end speedup:
 - Markov top-k: compare otherwise identical drafts with the config field
   removed. Markov gathered GEMMs use K=64; acceptance loss must be measured.
 - ACLGraph: logs contain target and draft graph replay after capture. No new
-  graph capture occurs during the steady-state repetition.
+  graph capture occurs during the steady-state repetition. Use `FULL`, not
+  `FULL_DECODE_ONLY`, and verify both prefill and adaptive verification replay.
 - Adaptive verification: accepted output is identical to fixed-width exact
   rejection sampling; target query-token count decreases on mixed prompts.
+  In the target-step host trace there must be no D2H copy for
+  `query_start_loc` or `seq_lens` after adaptive draft redistribution.
+- Fused FIA prolog: only the ten dense-model/five A4B global-attention layers
+  select `und_gen_qkv_rms_norm_rope_cache`; sliding-window layers retain the
+  existing path. The profiler must show one fused prolog launch per global
+  layer and no separate Q/K/V normalization, RoPE, or KV-write launch for that
+  layer. One shared INT32-to-INT64 slot preparation per full-attention cache
+  group/forward is expected and is reused by all global layers in that group.
+  Compare Q, K-cache, V-cache, and final logits against `target-mxfp` eager at
+  temperature 0.
 - MegaMoe: A4B logs select MegaMoe and the profiler shows fused dispatch/GMM/
   activation/combine instead of separate expert kernels.
 
@@ -184,7 +201,30 @@ bounds:
 | Markov correction candidates | 4096x less | 4096x less | 64 of 262,144 vocabulary rows; backbone LM head remains full-vocabulary |
 | Ideal speculative decode | 2.80x | 2.86x | Acceptance 0.70, seven drafts, draft/target cost 0.12 or 0.10 |
 | Perfect communication overlap | n/a | 1.33x | Only when communication is 25% of serial MegaMoe time |
+| Adaptive length D2H synchronizations | 2 to 0 | 2 to 0 | Per adaptive target step under FULL graph; removes the host blocking term |
+| Global FIA prolog logical launches | 5 to 1 | 5 to 1 | Q/K/V norm, RoPE and paged KV write collapse into one launch |
 
 Graph replay has no architecture-only multiplier: report its measured launch
 time reduction and TPOT. Quantization speedups are bandwidth ceilings, while
 the actual kernels can remain compute-, launch-, or synchronization-bound.
+
+## P1/P2 acceptance matrix
+
+Run every row on both checkpoints and retain eager output as the oracle:
+
+| Check | Command/config delta | Pass condition |
+| --- | --- | --- |
+| P1 graph correctness | `MODE=dspark-adaptive`, graph mode `FULL` | temperature-0 tokens equal eager for short, 8k and 32k prompts; zero graph recapture after warmup |
+| P1 adaptive boundaries | mixed acceptance requests at concurrency 1/8/16/32 | FIA receives monotonically increasing device q-boundaries ending at padded token count; no error 561002 |
+| P1 host synchronization | profile one warmed target step | zero NPU-to-CPU copies for query boundaries and sequence lengths after draft compaction |
+| P2 operator accuracy | operator whitebox `w_gemma4_global_d512` | Q/K/V match FP32 golden within BF16 tolerance for prefill and decode-shaped token counts |
+| P2 cache isolation | concurrent unique markers plus cancellations | each response contains only its own marker; reused slots match eager; zero illegal-memory/OOM errors |
+| P2 activation scope | inspect global and sliding layer traces | fused prolog only on global D512 BF16-BBND layers; sliding D256 layers unchanged |
+| Combined throughput | 2k/256 and 32k/128 matrices | higher output tokens/s and no TPOT regression versus `dspark-adaptive` before P1/P2 |
+
+The two launch/synchronization reductions above are exact structural benefits,
+not end-to-end speedup claims. Derive measured contribution from the trace as
+`2 * D2H_sync_latency` per adaptive target step plus four removed launch gaps
+per global layer. Report this separately from Cube/Vector execution time so the
+fusion and graph benefits are explainable without multiplying unrelated upper
+bounds.

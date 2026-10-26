@@ -33,10 +33,16 @@ from vllm.model_executor.models.utils import (
 )
 from vllm.utils.math_utils import divide
 
+from vllm_ascend.ops.gemma4_fia_prolog import (
+    gemma4_fia_prolog,
+    gemma4_fia_prolog_available,
+    get_gemma4_fia_prolog_context,
+)
 from vllm_ascend.ops.linear import (
     AscendColumnParallelLinear,
     AscendQKVParallelLinear,
 )
+from vllm_ascend.utils import AscendDeviceType, get_ascend_device_type
 
 _ORIGINAL_GEMMA4_FOR_CAUSAL_LM_INIT = Gemma4ForCausalLM.__init__
 
@@ -130,6 +136,32 @@ class AscendGemma4Attention(Gemma4Attention):
         **kwargs,
     ) -> torch.Tensor:
         qk, _ = self.qkv_proj(hidden_states)
+        prolog_context = None
+        if getattr(self, "_use_fused_fia_prolog", False):
+            prolog_context = get_gemma4_fia_prolog_context(self.attn.layer_name, qk.shape[0])
+        if prolog_context is not None:
+            key_cache, value_cache, slot_mapping = prolog_context
+            q = gemma4_fia_prolog(
+                qk,
+                positions,
+                self.q_norm.weight,
+                self.k_norm.weight,
+                self.rotary_emb._gemma4_fia_cos_sin_cache,
+                key_cache,
+                value_cache,
+                slot_mapping,
+                self.num_heads,
+                self.num_kv_heads,
+                self.q_norm.variance_epsilon,
+            )
+            # Ascend registers attention as an opaque custom op whose schema
+            # requires Tensor K/V arguments. A zero-row placeholder preserves
+            # that contract and marks the already-written paged cache path.
+            empty_kv = q.new_empty((0, self.num_kv_heads * self.head_dim))
+            attn_output = self.attn(q, empty_kv, empty_kv)
+            output, _ = self.o_proj(attn_output)
+            return output
+
         q, raw_kv = qk.split([self.q_size, self.kv_size], dim=-1)
 
         q = self.q_norm(q.unflatten(-1, (self.num_heads, self.head_dim)))
@@ -209,6 +241,26 @@ def _patched_gemma4_for_causal_lm_init(
             quant_config=vllm_config.quant_config,
             prefix=f"{model_prefix}.layers.{layer_idx}.self_attn.qkv_proj",
         )
+        use_fused_fia_prolog = (
+            get_ascend_device_type() == AscendDeviceType.A5
+            and layer_config.head_dim == 512
+            and attn.attn.kv_cache_torch_dtype == torch.bfloat16
+            and attn.q_norm.weight.dtype == torch.bfloat16
+            and attn.k_norm.weight.dtype == torch.bfloat16
+            and not getattr(attn.attn.impl, "use_bnsd_kv_cache", False)
+            and attn.rotary_emb.is_neox_style
+            and attn.rotary_emb.rotary_dim == layer_config.head_dim
+            and gemma4_fia_prolog_available()
+        )
+        if use_fused_fia_prolog and not hasattr(attn.rotary_emb, "_gemma4_fia_cos_sin_cache"):
+            # Keep the values identical to the model's existing RoPE cache;
+            # the operator ABI consumes FP32 to keep vector math in FP32.
+            attn.rotary_emb.register_buffer(
+                "_gemma4_fia_cos_sin_cache",
+                attn.rotary_emb.cos_sin_cache.float(),
+                persistent=False,
+            )
+        attn._use_fused_fia_prolog = use_fused_fia_prolog
         # Both classes are Python nn.Module types with the same instance
         # layout. Retain all initialized attention/normalization modules and
         # switch only the forward implementation before compilation starts.

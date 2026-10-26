@@ -14,6 +14,7 @@ from vllm.v1.worker.gpu.spec_decode.dspark.speculator import DSparkSpeculator
 
 import vllm_ascend.worker.v2.spec_decode.dspark.speculator as speculator_module
 from vllm_ascend.ascend_forward_context import get_mrv2_in_profile_run
+from vllm_ascend.attention.attention_v1 import FIAV2ParamProvider
 from vllm_ascend.attention.dsa_v1 import AscendDSAMetadataBuilder
 from vllm_ascend.attention.indexer import AscendSFAIndexerMetadataBuilder
 from vllm_ascend.attention.sfa_v1 import AscendSFAMetadataBuilder
@@ -250,3 +251,79 @@ def test_adaptive_idle_dp_restores_request_count_after_target_forward(
         for name, value in vars(padded_batch).items():
             if name != "num_reqs":
                 assert getattr(restored.input_batch, name) is value
+
+
+def test_adaptive_fia_padding_stays_on_device_for_padded_requests():
+    runner = NPUModelRunner.__new__(NPUModelRunner)
+    runner.input_buffers = SimpleNamespace(query_start_loc=torch.zeros(8, dtype=torch.int32))
+    runner._fia_padding_req_ids = torch.arange(1, 9, dtype=torch.int32)
+    exact = torch.tensor([0, 3, 7], dtype=torch.int32)
+
+    padded, num_reqs_padded = runner._pad_device_query_start_loc_for_fia(
+        exact,
+        num_tokens_padded=15,
+        num_reqs_padded=4,
+        num_reqs=2,
+    )
+
+    assert num_reqs_padded == 4
+    assert padded[:5].tolist() == [0, 3, 7, 11, 15]
+
+
+def test_adaptive_fia_padding_adds_one_device_dummy_request_for_token_padding():
+    runner = NPUModelRunner.__new__(NPUModelRunner)
+    runner.input_buffers = SimpleNamespace(query_start_loc=torch.zeros(8, dtype=torch.int32))
+    runner._fia_padding_req_ids = torch.arange(1, 9, dtype=torch.int32)
+    exact = torch.tensor([0, 3, 7], dtype=torch.int32)
+
+    padded, num_reqs_padded = runner._pad_device_query_start_loc_for_fia(
+        exact,
+        num_tokens_padded=8,
+        num_reqs_padded=2,
+        num_reqs=2,
+    )
+
+    assert num_reqs_padded == 3
+    assert padded[:4].tolist() == [0, 3, 7, 8]
+
+
+def test_adaptive_fia_padding_reserves_dummy_request_for_exact_graph_bucket():
+    runner = NPUModelRunner.__new__(NPUModelRunner)
+    runner.input_buffers = SimpleNamespace(query_start_loc=torch.zeros(8, dtype=torch.int32))
+    runner._fia_padding_req_ids = torch.arange(1, 9, dtype=torch.int32)
+    exact = torch.tensor([0, 3, 8], dtype=torch.int32)
+
+    padded, num_reqs_padded = runner._pad_device_query_start_loc_for_fia(
+        exact,
+        num_tokens_padded=8,
+        num_reqs_padded=2,
+        num_reqs=2,
+    )
+
+    assert num_reqs_padded == 3
+    assert padded[:4].tolist() == [0, 3, 8, 8]
+
+
+def test_fia_v2_replay_provider_uses_exact_device_lengths():
+    query_start_loc = torch.tensor([0, 2, 6], dtype=torch.int32)
+    seq_lens = torch.tensor([18, 31], dtype=torch.int32)
+    metadata = SimpleNamespace(
+        use_device_fia_lengths=True,
+        query_start_loc_gpu=query_start_loc,
+        seq_lens_gpu=seq_lens,
+        actual_seq_lengths_q=[99],
+        seq_lens_list=[99],
+    )
+
+    resolved = FIAV2ParamProvider("layer").resolve({"layer": metadata})
+
+    assert torch.equal(resolved["actual_seq_qlen"], query_start_loc[1:])
+    assert resolved["actual_seq_kvlen"] is seq_lens
+
+
+def test_adaptive_fia_device_seq_lens_pad_synthetic_requests():
+    seq_lens = torch.tensor([17, 31, 0, 0], dtype=torch.int32)
+
+    NPUModelRunner._pad_device_seq_lens_for_fia(seq_lens, num_reqs=2, num_reqs_padded=4)
+
+    assert seq_lens.tolist() == [17, 31, 1, 1]

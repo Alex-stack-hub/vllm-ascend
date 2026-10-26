@@ -152,6 +152,36 @@ def test_forward_non_pa_branches_receive_contiguous_kv(branch, contiguous, cross
     torch.testing.assert_close(output, torch.ones_like(query))
 
 
+def test_fused_gemma4_prolog_uses_paged_cache_without_generic_update():
+    impl = _make_impl()
+    metadata = _make_metadata()
+    backing = torch.arange(48, dtype=torch.float32).view(2, 2, 3, 1, 4)
+    impl.key_cache, impl.value_cache = backing[:, 0], backing[:, 1]
+    query = torch.zeros(3, 2, 4)
+    output = torch.empty_like(query)
+
+    with (
+        patch.object(attn_module, "_EXTRA_CTX", SimpleNamespace(capturing=False)),
+        patch.object(
+            attn_module.torch_npu,
+            "npu_fused_infer_attention_score",
+            create=True,
+            return_value=(torch.ones_like(query), None),
+        ) as direct_fia,
+        patch.object(attn_module.DeviceOperator, "npu_fused_infer_attention_score") as device_fia,
+    ):
+        result = impl.forward_fused_infer_attention(query, None, None, metadata, output)
+
+    direct_fia.assert_called_once()
+    device_fia.assert_not_called()
+    kwargs = direct_fia.call_args.kwargs
+    assert kwargs["block_table"] is metadata.block_tables
+    assert kwargs["key"].data_ptr() == impl.key_cache.data_ptr()
+    assert kwargs["value"].data_ptr() == impl.value_cache.data_ptr()
+    assert result is output
+    torch.testing.assert_close(output, torch.ones_like(query))
+
+
 @pytest.mark.parametrize("v2", [False, True])
 @pytest.mark.parametrize("use_pa", [False, True])
 def test_graph_workspace_and_task_preserve_fia_layout_contract(v2, use_pa):

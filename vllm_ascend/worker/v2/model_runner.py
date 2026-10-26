@@ -100,6 +100,8 @@ from vllm_ascend.observability.runtime_guard.hooks import (
 from vllm_ascend.observability.runtime_guard.processor import RuntimeGuardProcessor
 from vllm_ascend.ops.rotary_embedding import set_cos_and_sin, update_cos_sin
 from vllm_ascend.utils import (
+    AscendDeviceType,
+    get_ascend_device_type,
     is_c8_mxfp_kv_quant,
     is_deepseek_v41,
     lmhead_tp_enable,
@@ -155,6 +157,8 @@ class NPUModelRunner(GPUModelRunner):
         # Adaptive verification uses this flag to apply FIA-specific query
         # boundary and sequence length padding during FULL graph execution.
         self.use_fia = False
+        self._use_gemma4_device_fia_lengths = False
+        self._fia_padding_req_ids: torch.Tensor | None = None
         self._uses_flashmla = False
         # FusedMoE can be constructed by the parent initializer and reads this
         # capacity while setting up MC2 communication.
@@ -542,6 +546,23 @@ class NPUModelRunner(GPUModelRunner):
             for groups in self.attn_groups
             for group in groups
         )
+        speculative_config = self.vllm_config.speculative_config
+        self._use_gemma4_device_fia_lengths = (
+            self.use_fia
+            and get_ascend_device_type() == AscendDeviceType.A5
+            and self.model_config.hf_text_config.model_type == "gemma4_text"
+            and speculative_config is not None
+            and getattr(speculative_config, "method", None) == "dspark"
+            and getattr(speculative_config, "enable_adaptive_verification", False)
+        )
+        if self._use_gemma4_device_fia_lengths and self._fia_padding_req_ids is None:
+            self._fia_padding_req_ids = torch.arange(
+                1,
+                self.max_num_reqs + 2,
+                dtype=self.input_buffers.query_start_loc.dtype,
+                device=self.device,
+            )
+        self.model_state.use_device_fia_lengths = self._use_gemma4_device_fia_lengths
 
         self.kvpp = KVPPRuntime.create_from_kv_cache(
             vllm_config=self.vllm_config,
@@ -889,7 +910,16 @@ class NPUModelRunner(GPUModelRunner):
         adaptive_verification_active = (
             adaptive_verification_manager is not None and num_draft_tokens_per_req is not None
         )
-        num_scheduled_tokens_upper_bound = num_scheduled_tokens_np
+        use_device_fia_lengths = (
+            adaptive_verification_active
+            and self._use_gemma4_device_fia_lengths
+            and batch_desc.cg_mode == CUDAGraphMode.FULL
+        )
+        # compact_batch may reuse or mutate its input array. Preserve the
+        # scheduler allocation as an independent graph-shape upper bound.
+        num_scheduled_tokens_upper_bound = (
+            num_scheduled_tokens_np.copy() if use_device_fia_lengths else num_scheduled_tokens_np
+        )
         if adaptive_verification_active:
             num_scheduled_tokens_np, cu_num_logits_np = adaptive_verification_manager.compact_batch(
                 num_draft_tokens_per_req, num_scheduled_tokens_np, cu_num_logits_np
@@ -928,7 +958,7 @@ class NPUModelRunner(GPUModelRunner):
             total_num_logits = num_reqs * num_bonus_tokens + total_num_draft_tokens
 
             # Non-fia backends skip padding query boundary when using adaptive verification
-            if self.use_fia:
+            if self.use_fia and not use_device_fia_lengths:
                 query_start_loc_np[: num_reqs + 1] = query_start_loc[: num_reqs + 1].cpu().numpy()
                 query_start_loc_np[num_reqs + 1 :] = int(query_start_loc_np[num_reqs])
 
@@ -941,8 +971,16 @@ class NPUModelRunner(GPUModelRunner):
                     query_start_loc_np,
                 )
 
-            query_start_loc = self.input_buffers.query_start_loc
-            async_copy_to_gpu(query_start_loc_np, out=query_start_loc)
+            if use_device_fia_lengths:
+                query_start_loc, num_reqs_padded = self._pad_device_query_start_loc_for_fia(
+                    query_start_loc,
+                    num_tokens_after_padding,
+                    num_reqs_padded,
+                    num_reqs,
+                )
+            else:
+                query_start_loc = self.input_buffers.query_start_loc
+                async_copy_to_gpu(query_start_loc_np, out=query_start_loc)
 
         if draft_tokens:
             expanded_idx_mapping, expanded_local_pos = expand_idx_mapping(
@@ -977,8 +1015,19 @@ class NPUModelRunner(GPUModelRunner):
             self.input_buffers.seq_lens,
         )
         seq_lens = self.input_buffers.seq_lens[:num_reqs_padded]
+        num_computed_tokens_np = self.req_states.num_computed_tokens_np[idx_mapping_np]
         if adaptive_verification_active and self.use_fia:
-            self.input_buffers.seq_lens_np[:num_reqs] = seq_lens[:num_reqs].cpu().numpy()
+            if use_device_fia_lengths:
+                self._pad_device_seq_lens_for_fia(seq_lens, num_reqs, num_reqs_padded)
+                # CPU metadata is a graph-shape upper bound only. FIA consumes
+                # the exact persistent device tensor during capture/replay.
+                np.add(
+                    num_computed_tokens_np,
+                    num_scheduled_tokens_upper_bound,
+                    out=self.input_buffers.seq_lens_np[:num_reqs],
+                )
+            else:
+                self.input_buffers.seq_lens_np[:num_reqs] = seq_lens[:num_reqs].cpu().numpy()
 
         # Pad for full CUDA graph mode.
         self.input_buffers.seq_lens_np[num_reqs:] = 0
@@ -1004,7 +1053,6 @@ class NPUModelRunner(GPUModelRunner):
 
         # CPU upper bound on seq_lens (num_computed_tokens + num_scheduled_tokens).
         # Added by vLLM PR #40654 to avoid GPU->CPU sync for seq_lens.
-        num_computed_tokens_np = self.req_states.num_computed_tokens_np[idx_mapping_np]
         seq_lens_cpu_upper_bound_np = np.zeros(num_reqs_padded, dtype=np.int32)
         np.add(
             num_computed_tokens_np,
@@ -1446,6 +1494,42 @@ class NPUModelRunner(GPUModelRunner):
         cumulative_padding = np.arange(1, num_padding_reqs + 1, dtype=np.int32) * num_padding_tokens // num_padding_reqs
         query_start_loc_np[num_reqs + 1 : num_reqs_padded + 1] = last_loc + cumulative_padding
         return query_start_loc_np, num_reqs_padded
+
+    def _pad_device_query_start_loc_for_fia(
+        self,
+        query_start_loc: torch.Tensor,
+        num_tokens_padded: int,
+        num_reqs_padded: int,
+        num_reqs: int,
+    ) -> tuple[torch.Tensor, int]:
+        """Pad adaptive FIA boundaries without synchronizing NPU values to CPU."""
+        persistent = self.input_buffers.query_start_loc
+        persistent[: num_reqs + 1].copy_(query_start_loc[: num_reqs + 1])
+        num_padding_reqs = num_reqs_padded - num_reqs
+        last_loc = persistent[num_reqs]
+        if num_padding_reqs > 0:
+            assert self._fia_padding_req_ids is not None
+            padding_req_ids = self._fia_padding_req_ids[:num_padding_reqs]
+            persistent[num_reqs + 1 : num_reqs_padded + 1].copy_(
+                last_loc + padding_req_ids * (num_tokens_padded - last_loc) // num_padding_reqs
+            )
+        else:
+            # Adaptive verification can remove draft rows even when the
+            # scheduler's original token count exactly matches the graph
+            # bucket. Always reserve a synthetic request in this shape; its
+            # device boundary is positive after compaction and harmlessly
+            # zero-length when no rows were removed.
+            persistent[num_reqs + 1].fill_(num_tokens_padded)
+            num_reqs_padded += 1
+        return persistent, num_reqs_padded
+
+    @staticmethod
+    def _pad_device_seq_lens_for_fia(seq_lens: torch.Tensor, num_reqs: int, num_reqs_padded: int) -> None:
+        """Give synthetic FULL-graph requests a harmless positive KV length."""
+        if num_reqs_padded > num_reqs:
+            # The zero block-table row makes this read harmless, and graph
+            # padding tokens retain PAD_SLOT_ID so they never write cache.
+            seq_lens[num_reqs:num_reqs_padded].fill_(1)
 
 
 @contextmanager

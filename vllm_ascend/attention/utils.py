@@ -384,6 +384,9 @@ class AscendCommonAttentionMetadata(CommonAttentionMetadata):
 
     # Total number of tokens including padding, used for padding operations.
     num_input_tokens: int = 0
+    # Gemma4 adaptive FULL graphs keep exact query/KV lengths on device so
+    # draft reallocation does not force a per-step D2H synchronization.
+    use_device_fia_lengths: bool = False
 
     # Metadata for Decode Context Parallelism (DCP) operations.
     context_parallel_metadata: AscendDCPMetadata | None = None

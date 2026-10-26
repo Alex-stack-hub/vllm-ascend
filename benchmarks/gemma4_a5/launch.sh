@@ -66,7 +66,7 @@ case "${MODE}" in
     else
       # Query length is 1 bonus + 7 drafts. These token buckets cover BS 1..16.
       args+=(--compilation-config
-        '{"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[8,16,24,32,48,64,96,128]}')
+        '{"cudagraph_mode":"FULL","cudagraph_capture_sizes":[8,16,24,32,48,64,96,128]}')
     fi
     ;;
   *)

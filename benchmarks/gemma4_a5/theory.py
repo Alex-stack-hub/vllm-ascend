@@ -85,6 +85,10 @@ def main() -> None:
             "k_eq_v_full_layer_projection_flop_ratio": full_projection_ratio,
             "k_eq_v_all_layer_projection_flop_ratio": all_layer_projection_ratio,
             "k_eq_v_qkv_projection_upper_bound": 1.0 / all_layer_projection_ratio,
+            "global_fia_prolog_logical_launches_before": 5,
+            "global_fia_prolog_logical_launches_after": 1,
+            "global_fia_prolog_launches_removed_per_layer": 4,
+            "global_fia_prolog_layers_per_target_forward": cfg["full_layers"],
         },
         "dspark": {
             "expected_accepted_drafts_per_step": expected_accepted,
@@ -92,6 +96,8 @@ def main() -> None:
             "context_k_qmm_launches_before": cfg["draft_layers"],
             "context_k_qmm_launches_after": 1,
             "markov_candidate_ratio": args.markov_topk / 262144.0,
+            "adaptive_length_d2h_syncs_before_per_target_step": 2,
+            "adaptive_length_d2h_syncs_after_per_target_step": 0,
         },
         "moe": (
             {
@@ -105,6 +111,9 @@ def main() -> None:
             "Bounds exclude scale metadata alignment, non-quantized layers, scheduler cost, and memory stalls.",
             "Speculative speedup uses independent per-position acceptance and the supplied draft/target cost ratio.",
             "Measure end-to-end throughput and TPOT; do not add these factors multiplicatively.",
+            "FIA prolog launch counts are logical stages; confirm physical launch counts in the A5 profiler.",
+            "The adaptive graph path removes two blocking D2H length copies; "
+            "its latency gain is twice the measured sync latency.",
         ],
     }
     print(json.dumps(report, indent=2))
