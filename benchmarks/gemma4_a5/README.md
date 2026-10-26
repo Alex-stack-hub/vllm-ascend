@@ -125,6 +125,9 @@ Use these checks before accepting an end-to-end speedup:
   (`Q+K`, not `Q+K+V`) and outputs match the unoptimized model at temperature 0.
   Measure this component against the same checkpoint on an unpatched checkout;
   both `target-bf16` and `target-mxfp` use the optimized projection in this PR.
+  The implementation is a worker patch of the upstream Gemma 4 initializer;
+  it activates only when `attention_k_eq_v` is true, the layer is full
+  attention, and the layer does not consume shared KV.
 - DSpark context projection: profiler shows one context-K QMM per request
   initialization, with N equal to `draft_layers * local_kv_width`.
 - Markov top-k: compare otherwise identical drafts with the config field

@@ -1,6 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Ascend text-model optimizations for Gemma 4."""
+"""Patch upstream Gemma 4 full-attention K=V projection on Ascend A5.
+
+The upstream model expands one checkpoint K projection into separate K and V
+shards and executes both matrix products. Gemma 4 declares that these raw
+projections are equal on global-attention layers, so Ascend can project Q+K
+once and still apply the model's distinct K/V normalization and K-only RoPE.
+
+This worker patch is intentionally limited to Gemma 4 full-attention layers
+that declare ``attention_k_eq_v``. Remove it after the upstream Gemma 4 model
+exposes a projection hook or implements the same reduced projection.
+"""
 
 from typing import Any
 
@@ -27,6 +37,8 @@ from vllm_ascend.ops.linear import (
     AscendColumnParallelLinear,
     AscendQKVParallelLinear,
 )
+
+_ORIGINAL_GEMMA4_FOR_CAUSAL_LM_INIT = Gemma4ForCausalLM.__init__
 
 
 class Gemma4QKParallelLinear(AscendQKVParallelLinear):
@@ -162,44 +174,53 @@ def _gemma4_ascend_weights_mapper(config: Any) -> WeightsMapper:
     )
 
 
-class AscendGemma4ForCausalLM(Gemma4ForCausalLM):
-    """Gemma 4 target with reduced Q/K projection on K=V global layers."""
+def _patched_gemma4_for_causal_lm_init(
+    self: Gemma4ForCausalLM,
+    *,
+    vllm_config: VllmConfig,
+    prefix: str = "",
+) -> None:
+    """Install the reduced projection before the model is compiled."""
+    _ORIGINAL_GEMMA4_FOR_CAUSAL_LM_INIT(
+        self,
+        vllm_config=vllm_config,
+        prefix=prefix,
+    )
+    config = _get_text_config(vllm_config.model_config.hf_config)
+    if not bool(getattr(config, "attention_k_eq_v", False)):
+        return
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
-        super().__init__(vllm_config=vllm_config, prefix=prefix)
-        config = _get_text_config(vllm_config.model_config.hf_config)
-        if not bool(getattr(config, "attention_k_eq_v", False)):
-            return
+    model_prefix = maybe_prefix(prefix, "model")
+    for layer_idx, layer in enumerate(self.model.layers):
+        if isinstance(layer, PPMissingLayer):
+            continue
+        if config.layer_types[layer_idx] != "full_attention":
+            continue
+        attn = layer.self_attn
+        if attn.is_kv_shared_layer:
+            continue
+        layer_config = config.per_layer_config[layer_idx]
+        attn.qkv_proj = Gemma4QKParallelLinear(
+            hidden_size=config.hidden_size,
+            head_size=layer_config.head_dim,
+            total_num_heads=config.num_attention_heads,
+            total_num_kv_heads=layer_config.num_key_value_heads,
+            bias=config.attention_bias,
+            quant_config=vllm_config.quant_config,
+            prefix=f"{model_prefix}.layers.{layer_idx}.self_attn.qkv_proj",
+        )
+        # Both classes are Python nn.Module types with the same instance
+        # layout. Retain all initialized attention/normalization modules and
+        # switch only the forward implementation before compilation starts.
+        attn.__class__ = AscendGemma4Attention
 
-        model_prefix = maybe_prefix(prefix, "model")
-        for layer_idx, layer in enumerate(self.model.layers):
-            if isinstance(layer, PPMissingLayer):
-                continue
-            if config.layer_types[layer_idx] != "full_attention":
-                continue
-            attn = layer.self_attn
-            if attn.is_kv_shared_layer:
-                continue
-            layer_config = config.per_layer_config[layer_idx]
-            attn.qkv_proj = Gemma4QKParallelLinear(
-                hidden_size=config.hidden_size,
-                head_size=layer_config.head_dim,
-                total_num_heads=config.num_attention_heads,
-                total_num_kv_heads=layer_config.num_key_value_heads,
-                bias=config.attention_bias,
-                quant_config=vllm_config.quant_config,
-                prefix=f"{model_prefix}.layers.{layer_idx}.self_attn.qkv_proj",
-            )
-            # Both classes are Python nn.Module types with the same instance
-            # layout. Retain all initialized attention/normalization modules
-            # and switch only the forward implementation.
-            attn.__class__ = AscendGemma4Attention
+    self.model.hf_to_vllm_mapper = _gemma4_ascend_weights_mapper(config)
 
-        self.model.hf_to_vllm_mapper = _gemma4_ascend_weights_mapper(config)
+
+Gemma4ForCausalLM.__init__ = _patched_gemma4_for_causal_lm_init
 
 
 __all__ = [
     "AscendGemma4Attention",
-    "AscendGemma4ForCausalLM",
     "Gemma4QKParallelLinear",
 ]

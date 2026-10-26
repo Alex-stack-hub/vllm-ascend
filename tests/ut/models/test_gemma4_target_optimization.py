@@ -5,12 +5,14 @@ from types import SimpleNamespace
 
 import torch
 import torch.nn as nn
+from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM
 
-from vllm_ascend.models.gemma4 import (
+from vllm_ascend.models.gemma4_dspark import AscendGemma4DSparkModel
+from vllm_ascend.patch.worker.patch_gemma4 import (
     AscendGemma4Attention,
     _gemma4_ascend_weights_mapper,
+    _patched_gemma4_for_causal_lm_init,
 )
-from vllm_ascend.models.gemma4_dspark import AscendGemma4DSparkModel
 
 
 class _Linear(nn.Module):
@@ -43,6 +45,10 @@ class _Attention(nn.Module):
         self.key = key
         self.value = value
         return query
+
+
+def test_worker_patch_replaces_upstream_gemma4_initializer():
+    assert Gemma4ForCausalLM.__init__ is _patched_gemma4_for_causal_lm_init
 
 
 def test_k_eq_v_target_projects_once_but_normalizes_k_and_v_separately():
