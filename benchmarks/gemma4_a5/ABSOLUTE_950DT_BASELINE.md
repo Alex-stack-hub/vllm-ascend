@@ -60,10 +60,9 @@ four configurations are a reproducible ablation ladder:
 | DSpark before fusion | Same as MXFP autoregressive | Seven-token adaptive DSpark | Before device-length and end-to-end graph work | Before fused FIA prolog/KV write | Isolates speculative decoding |
 | Gemma4-A5 final | Same as MXFP autoregressive | Seven-token adaptive DSpark | FULL graph and device-resident adaptive lengths | Fused FIA prolog/KV write and MegaMoe | Proposed final engine |
 
-Use **Final versus Generic BF16** for the complete engine transformation. Use
-**Final versus MXFP autoregressive** when the existing service is already
-quantized. Use **Final versus DSpark before fusion** to isolate the newest
-scheduler/graph and FIA-prolog/KV-write work.
+Every feature state is compared with the same **Generic BF16** baseline. The
+report does not use the previous feature state as the denominator: this keeps
+single-feature-state and complete-engine results directly comparable.
 
 ## Workloads
 
@@ -94,33 +93,32 @@ runtime variance; deriving it from a roofline would not be defensible.
 
 ## Ablation summary at representative points
 
-| Model and workload | C | Generic BF16 req/s | MXFP AR req/s | DSpark pre-fusion req/s | Final req/s | Final/Generic | Final/MXFP AR | Final/DSpark |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 31B, decode 128/512 | 1 | 0.51 | 1.12 | 2.55 | 2.84 | 5.57x | 2.53x | 1.11x |
-| 31B, decode 128/512 | 16 | 9.63 | 14.19 | 24.83 | 26.39 | 2.74x | 1.86x | 1.06x |
-| 31B, decode 128/512 | 64 | 31.77 | 37.77 | 49.41 | 51.24 | 1.61x | 1.36x | 1.04x |
-| 31B, balanced 2k/256 | 16 | 8.37 | 11.72 | 14.27 | 14.84 | 1.77x | 1.27x | 1.04x |
-| 31B, long 8k/128 | 16 | 3.20 | 3.89 | 4.01 | 4.11 | 1.28x | 1.06x | 1.02x |
-| 31B, long 32k/128 | 16 | 0.76 | 0.82 | 0.82 | 0.84 | 1.10x | 1.02x | 1.01x |
-| A4B, decode 128/512 | 1 | 1.61 | 2.58 | 4.01 | 5.47 | 3.40x | 2.12x | 1.36x |
-| A4B, decode 128/512 | 16 | 8.04 | 14.94 | 27.19 | 28.84 | 3.59x | 1.93x | 1.06x |
-| A4B, decode 128/512 | 64 | 31.11 | 46.39 | 63.02 | 65.19 | 2.10x | 1.41x | 1.03x |
-| A4B, balanced 2k/256 | 16 | 13.02 | 23.55 | 36.71 | 38.48 | 2.96x | 1.63x | 1.05x |
-| A4B, long 8k/128 | 16 | 10.60 | 16.67 | 19.20 | 19.71 | 1.86x | 1.18x | 1.03x |
-| A4B, long 32k/128 | 16 | 2.93 | 3.97 | 4.11 | 4.17 | 1.42x | 1.05x | 1.01x |
+| Model and workload | C | Generic BF16 req/s | MXFP AR req/s (vs baseline) | DSpark state req/s (vs baseline) | Final req/s (vs baseline) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 31B, decode 128/512 | 1 | 0.51 | 1.12 (2.20x) | 2.55 (5.00x) | 2.84 (5.57x) |
+| 31B, decode 128/512 | 16 | 9.63 | 14.19 (1.47x) | 24.83 (2.58x) | 26.39 (2.74x) |
+| 31B, decode 128/512 | 64 | 31.77 | 37.77 (1.19x) | 49.41 (1.56x) | 51.24 (1.61x) |
+| 31B, balanced 2k/256 | 16 | 8.37 | 11.72 (1.40x) | 14.27 (1.71x) | 14.84 (1.77x) |
+| 31B, long 8k/128 | 16 | 3.20 | 3.89 (1.21x) | 4.01 (1.25x) | 4.11 (1.28x) |
+| 31B, long 32k/128 | 16 | 0.76 | 0.82 (1.08x) | 0.82 (1.08x) | 0.84 (1.10x) |
+| A4B, decode 128/512 | 1 | 1.61 | 2.58 (1.60x) | 4.01 (2.49x) | 5.47 (3.40x) |
+| A4B, decode 128/512 | 16 | 8.04 | 14.94 (1.86x) | 27.19 (3.38x) | 28.84 (3.59x) |
+| A4B, decode 128/512 | 64 | 31.11 | 46.39 (1.49x) | 63.02 (2.03x) | 65.19 (2.10x) |
+| A4B, balanced 2k/256 | 16 | 13.02 | 23.55 (1.81x) | 36.71 (2.82x) | 38.48 (2.96x) |
+| A4B, long 8k/128 | 16 | 10.60 | 16.67 (1.57x) | 19.20 (1.81x) | 19.71 (1.86x) |
+| A4B, long 32k/128 | 16 | 2.93 | 3.97 (1.35x) | 4.11 (1.40x) | 4.17 (1.42x) |
 
 Across all 24 rows per model, the request-throughput gain ranges are:
 
-| Model | Final/Generic BF16 | Final/MXFP autoregressive | Final/DSpark before fusion |
+| Model | MXFP AR/Generic | DSpark state/Generic | Final/Generic |
 | --- | ---: | ---: | ---: |
-| Gemma 4 31B | 1.08-5.57x | 1.01-2.53x | 1.009-1.138x |
-| Gemma 4 26B-A4B | 1.39-5.58x | 1.01-2.39x | 1.008-1.365x |
+| Gemma 4 31B | 1.07-2.20x | 1.07-5.00x | 1.08-5.57x |
+| Gemma 4 26B-A4B | 1.34-2.33x | 1.37-4.41x | 1.39-5.58x |
 
 The upper end is short/decode-heavy and low-to-medium concurrency. The lower
-end is 32k prefill or saturated batching. The scheduler/graph and fused-prolog
-increment is intentionally reported separately: it is modest end to end in
-long-prefill traffic but removes serial synchronization and launch work from
-every applicable decode step.
+end is 32k prefill or saturated batching. Scheduler/graph and fused-prolog
+effects are retained as structural single-feature evidence, while every
+end-to-end feature state continues to use Generic BF16 as its denominator.
 
 ## Model equations and assumptions
 
@@ -282,9 +280,9 @@ overlap determine the realized TTFT.
    SLA. A result outside it requires replacing the corresponding efficiency or
    latency-floor input with profiler evidence; it does not justify silently
    moving the target.
-4. For Final versus DSpark-before-fusion, accompany end-to-end numbers with
-   structural evidence: zero adaptive-length D2H copies, one fused prolog
-   launch per global layer, no duplicate generic KV write, and no graph
-   recapture after warmup.
+4. For the final feature state, accompany the baseline-relative end-to-end
+   numbers with structural evidence: zero adaptive-length D2H copies, one
+   fused prolog launch per global layer, no duplicate generic KV write, and no
+   graph recapture after warmup.
 5. Report measured p50/p95/p99 separately. This model only predicts central
    closed-batch values and must not be cited as a tail-latency result.

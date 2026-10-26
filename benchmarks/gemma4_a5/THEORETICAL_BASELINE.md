@@ -15,10 +15,10 @@ on a defined eight-card 950DT node, see
   and the fused prolog.
 - **Gemma4-A5 final**: the complete optimized path in this change set.
 
-Final/Generic values include target weight quantization, DSpark,
-graph/control-flow work, the target projection change, and the A4B MegaMoe
-path where applicable. Final/MXFP isolates the speculative and graph/fusion
-stack from target quantization. Final/DSpark-before-fusion isolates P1/P2.
+Every feature state uses Generic BF16 as the denominator. Final/Generic values
+include target weight quantization, DSpark, graph/control-flow work, the target
+projection change, and the A4B MegaMoe path where applicable. Adjacent-stage
+ratios are deliberately omitted.
 
 ## Implemented optimization ledger
 
@@ -87,9 +87,9 @@ Expected Final/Generic output-throughput (equivalently inverse-TPOT) curve:
 
 The curve falls with concurrency because BF16 weight reads and launch gaps are
 already amortized by batching. A4B retains more high-concurrency benefit from
-expert communication overlap. Final/MXFP is the fairer comparison when production
-already uses MXFP: for decode-heavy requests, the request-level central curve
-is about 2.24/2.12/1.98/1.78/1.56/1.36x for C1/4/8/16/32/64.
+expert communication overlap. The MXFP-only and DSpark feature states are also
+reported against Generic BF16 so they can be read on the same scale as the
+final engine.
 
 ### End-to-end request curve
 
@@ -112,15 +112,13 @@ decode, not the original prompt pass, and global attention increasingly
 dominates TTFT. For a serving trace with different phase shares, rerun
 `theory.py --matrix` after replacing the workload shares.
 
-### P1/P2-only curve
+### Scheduler and fused-prolog structural evidence
 
-Final/DSpark-before-fusion isolates the two newest changes. The central request-level curve ranges
-from 1.108x at 31B C1 decode-heavy to 1.011x at 31B C64/32k, and from 1.102x
-to 1.010x for A4B. It is largest at low concurrency and short context, where
-two host synchronizations and four removed logical launch gaps per global
-layer occupy the largest fraction. The gain approaches 1-3% at 32k or high
-concurrency because attention/Cube work dominates. This remains valuable
-because it removes serial host tail latency and should reduce variance.
+The two newest changes are not presented with an adjacent-stage end-to-end
+ratio. Their single-feature evidence is instead: two adaptive-length D2H
+synchronizations become zero per target step, and five logical global-layer
+prolog/cache-write stages become one. These effects are included in the final
+feature state, whose end-to-end values remain relative to Generic BF16.
 
 ## Context and acceptance curves
 

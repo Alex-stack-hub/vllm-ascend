@@ -247,22 +247,6 @@ def expected_curve(args: argparse.Namespace, bounds: dict[str, Any]) -> list[dic
                 # Small extra allowance for fused gated activation/cache flow.
                 moe *= 1.02
 
-            b3_vs_b2_decode = p1_p2_decode
-            b3_vs_b2_prefill = p1_p2_prefill
-            b3_vs_b2_request = _harmonic_phase_speedup(
-                b3_vs_b2_prefill,
-                b3_vs_b2_decode,
-                decode_share,
-            )
-
-            b3_vs_b1_decode = spec * p1_p2_decode
-            b3_vs_b1_prefill = p1_p2_prefill
-            b3_vs_b1_request = _harmonic_phase_speedup(
-                b3_vs_b1_prefill,
-                b3_vs_b1_decode,
-                decode_share,
-            )
-
             b3_vs_b0_decode = decode_quant * spec * p1_p2_decode * k_eq_v_target * moe
             b3_vs_b0_prefill = prefill_quant * p1_p2_prefill * k_eq_v_target * moe
             b3_vs_b0_request = _harmonic_phase_speedup(
@@ -281,8 +265,6 @@ def expected_curve(args: argparse.Namespace, bounds: dict[str, Any]) -> list[dic
                         "b3_vs_b0_request": b3_vs_b0_request,
                         "b3_vs_b0_ttft": b3_vs_b0_prefill,
                         "b3_vs_b0_tpot_or_decode_throughput": b3_vs_b0_decode,
-                        "b3_vs_b1_request": b3_vs_b1_request,
-                        "b3_vs_b2_request": b3_vs_b2_request,
                     },
                     "central_factors": {
                         "target_quant_decode": decode_quant,
@@ -445,16 +427,16 @@ def absolute_serving_report(
                 "dspark_prefusion": dspark_prefusion,
                 "gemma4_a5_final": final,
                 "realized_speedup": {
+                    "mxfp_ar_vs_generic_requests_per_second": (
+                        quant_ar["requests_per_second"] / generic["requests_per_second"]
+                    ),
+                    "dspark_state_vs_generic_requests_per_second": (
+                        dspark_prefusion["requests_per_second"] / generic["requests_per_second"]
+                    ),
                     "final_vs_generic_ttft": generic["ttft_ms"] / final["ttft_ms"],
                     "final_vs_generic_tpot": generic["tpot_ms"] / final["tpot_ms"],
                     "final_vs_generic_requests_per_second": (
                         final["requests_per_second"] / generic["requests_per_second"]
-                    ),
-                    "final_vs_mxfp_ar_requests_per_second": (
-                        final["requests_per_second"] / quant_ar["requests_per_second"]
-                    ),
-                    "final_vs_dspark_prefusion_requests_per_second": (
-                        final["requests_per_second"] / dspark_prefusion["requests_per_second"]
                     ),
                 },
                 "active_ceiling": {
@@ -529,13 +511,12 @@ def _markdown_matrix(model: str, rows: list[dict[str, Any]]) -> str:
     lines = [
         f"# {model} central expected speedup matrix",
         "",
-        "Generic = BF16 eager AR; MXFP AR = quantized target; DSpark pre-fusion = before graph/prolog fusion; ",
+        "Generic = BF16 eager AR; MXFP AR = quantized target; DSpark pre-fusion = before graph/prolog fusion; "
         "Final = current Gemma4 A5 path.",
         "All values are assumption-driven central estimates, not measurements.",
         "",
-        "| Workload | C | Final/Generic request | Final/Generic TTFT | Final/Generic decode | "
-        "Final/MXFP AR request | Final/DSpark pre-fusion request |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Workload | C | Final/Generic request | Final/Generic TTFT | Final/Generic decode |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
     for row in rows:
         speedup = row["expected_speedup"]
@@ -543,9 +524,7 @@ def _markdown_matrix(model: str, rows: list[dict[str, Any]]) -> str:
             f"| {row['workload']} | {row['concurrency']} | "
             f"{speedup['b3_vs_b0_request']:.2f}x | "
             f"{speedup['b3_vs_b0_ttft']:.2f}x | "
-            f"{speedup['b3_vs_b0_tpot_or_decode_throughput']:.2f}x | "
-            f"{speedup['b3_vs_b1_request']:.2f}x | "
-            f"{speedup['b3_vs_b2_request']:.3f}x |"
+            f"{speedup['b3_vs_b0_tpot_or_decode_throughput']:.2f}x |"
         )
     return "\n".join(lines)
 
